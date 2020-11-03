@@ -12,8 +12,8 @@ import torch.distributed as dist
 
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
-from apex.parallel import DistributedDataParallel as DDP
 from apex import amp
+from apex.parallel import DistributedDataParallel as DDP
 
 from models.modeling import VisionTransformer, CONFIGS
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
@@ -124,11 +124,6 @@ def valid(args, model, writer, test_loader, global_step):
 
     all_preds, all_label = all_preds[0], all_label[0]
     accuracy = simple_accuracy(all_preds, all_label)
-    print("\n")
-    print("Validation Results")
-    print("Global Steps: %d" % global_step)
-    print("Valid Loss: %2.5f" % eval_losses.avg)
-    print("Valid Accuracy: %2.5f" % accuracy)
 
     logger.info("\n")
     logger.info("Validation Results")
