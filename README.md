@@ -31,15 +31,19 @@ python3 train.py --name cifar10-100_500 --dataset cifar10 --model_type ViT-B_16 
 ```
 
 
+
 ## Results
 To verify reproducibility, we simply compare it with the author's experimental results.
 
-|  upstream   |  model   |  dataset  | total_steps /warmup_steps | acc(official) | acc(this repo) | tensorboard |
-|:-----------:|:--------:|:---------:|:-------------------------:|:-------------:|:--------------:|:-----------:|
-| imagenet21k | ViT-B_16 | CIFAR-10  |          500/100          |    0.9859     |                |             |
-| imagenet21k | ViT-B_16 | CIFAR-10  |         1000/100          |    0.9886     |                |             |
-| imagenet21k | ViT-B_16 | CIFAR-100 |          500/100          |    0.8917     |                |             |
-| imagenet21k | ViT-B_16 | CIFAR-100 |         1000/100          |    0.9115     |                |             |
+[**tensorboard**]()
+
+|  upstream   |  model   |  dataset  | total_steps /warmup_steps | acc(official) | acc(this repo) |
+|:-----------:|:--------:|:---------:|:-------------------------:|:-------------:|:--------------:|
+| imagenet21k | ViT-B_16 | CIFAR-10  |          500/100          |    0.9859     |     0.9869     |
+| imagenet21k | ViT-B_16 | CIFAR-10  |         1000/100          |    0.9886     |                |
+| imagenet21k | ViT-B_16 | CIFAR-100 |          500/100          |    0.8917     |  in progress   |
+| imagenet21k | ViT-B_16 | CIFAR-100 |         1000/100          |    0.9115     |  in progress   |
+
 
 ## Reference
 * [Google ViT](https://github.com/google-research/vision_transformer)
