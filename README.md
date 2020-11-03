@@ -35,7 +35,7 @@ python3 train.py --name cifar10-100_500 --dataset cifar10 --model_type ViT-B_16 
 ## Results
 To verify reproducibility, we simply compare it with the author's experimental results. We trained using mixed precision, and `--fp16_opt_level` was set to O2.
 
-[**tensorboard**](https://tensorboard.dev/experiment/Km4dHD1yTaqrHwKKlGqZew/#scalars)
+[**tensorboard**](https://tensorboard.dev/experiment/w3E7dBdqQKW2D93ReUODPA/#scalars)
 
 |  upstream   |  model   |  dataset  | total_steps /warmup_steps | acc(official) | acc(this repo) |
 |:-----------:|:--------:|:---------:|:-------------------------:|:-------------:|:--------------:|
