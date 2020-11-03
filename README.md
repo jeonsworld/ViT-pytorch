@@ -10,3 +10,32 @@ Vision Transformer achieve State-of-the-Art in image recognition task with stand
 ![fig2](./img/figure2.png)
 
 
+## Usage
+### 1. Download Pre-trained model
+* [Available models](https://console.cloud.google.com/storage/vit_models/): ViT-B_16, ViT-B_32, ViT-L_32
+```
+wget https://storage.googleapis.com/vit_models/imagenet21k/{MODEL_NAME}.npz
+```
+
+### 2. Train
+```
+python3 train.py --name cifar10-100_500 --dataset cifar10 --model_type ViT-B_16 --pretrained_dir checkpoint/ViT-B_16.npz
+```
+CIFAR-10 and CIFAR-100 are automatically download and train. In order to use a different dataset you need to customize [data_utils.py]().
+
+The default batch size is 512. When GPU memory is insufficient, you can proceed with training by adjusting the value of gradient_accumulation_steps.
+
+
+## Results
+To verify reproducibility, we simply compare it with the author's experimental results.
+
+|  upstream   |  model   |  dataset  | total_steps /warmup_steps | acc(official) | acc(this repo) | tensorboard |
+|:-----------:|:--------:|:---------:|:-------------------------:|:-------------:|:--------------:|:-----------:|
+| imagenet21k | ViT-B_16 | CIFAR-10  |          500/100          |    0.9859     |                |             |
+| imagenet21k | ViT-B_16 | CIFAR-10  |         1000/100          |    0.9886     |                |             |
+| imagenet21k | ViT-B_16 | CIFAR-100 |          500/100          |    0.8917     |                |             |
+| imagenet21k | ViT-B_16 | CIFAR-100 |         1000/100          |    0.9115     |                |             |
+
+## Reference
+* [Google ViT](https://github.com/google-research/vision_transformer)
+* [Pytorch Image Models(timm)](https://github.com/rwightman/pytorch-image-models)
