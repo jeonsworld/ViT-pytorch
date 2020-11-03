@@ -190,7 +190,7 @@ def train(args, model):
             batch = tuple(t.to(args.device) for t in batch)
             x, y = batch
             loss = model(x, y)
-
+            losses.update(loss.item())
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
             if args.fp16:
@@ -198,7 +198,7 @@ def train(args, model):
                     scaled_loss.backward()
             else:
                 loss.backward()
-            losses.update(loss.item()*args.gradient_accumulation_steps)
+
             if (step+1) % args.gradient_accumulation_steps == 0:
                 if args.fp16:
                     torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
