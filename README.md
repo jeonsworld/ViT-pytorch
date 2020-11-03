@@ -53,13 +53,10 @@ To verify reproducibility, we simply compare it with the author's experimental r
 ## Citations
 
 ```bibtex
-@inproceedings{
-    anonymous2021an,
-    title={An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale},
-    author={Anonymous},
-    booktitle={Submitted to International Conference on Learning Representations},
-    year={2021},
-    url={https://openreview.net/forum?id=YicbFdNTTy},
-    note={under review}
+@article{dosovitskiy2020,
+  title={An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale},
+  author={Dosovitskiy, Alexey and Beyer, Lucas and Kolesnikov, Alexander and Weissenborn, Dirk and Zhai, Xiaohua and Unterthiner, Thomas and  Dehghani, Mostafa and Minderer, Matthias and Heigold, Georg and Gelly, Sylvain and Uszkoreit, Jakob and Houlsby, Neil},
+  journal={arXiv preprint arXiv:2010.11929},
+  year={2020}
 }
 ```
