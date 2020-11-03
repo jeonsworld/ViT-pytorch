@@ -41,10 +41,25 @@ To verify reproducibility, we simply compare it with the author's experimental r
 |:-----------:|:--------:|:---------:|:-------------------------:|:-------------:|:--------------:|
 | imagenet21k | ViT-B_16 | CIFAR-10  |          500/100          |    0.9859     |     0.9869     |
 | imagenet21k | ViT-B_16 | CIFAR-10  |         1000/100          |    0.9886     |     0.9878     |
-| imagenet21k | ViT-B_16 | CIFAR-100 |          500/100          |    0.8917     |  in progress   |
+| imagenet21k | ViT-B_16 | CIFAR-100 |          500/100          |    0.8917     |     0.9205     |
 | imagenet21k | ViT-B_16 | CIFAR-100 |         1000/100          |    0.9115     |  in progress   |
 
 
 ## Reference
 * [Google ViT](https://github.com/google-research/vision_transformer)
 * [Pytorch Image Models(timm)](https://github.com/rwightman/pytorch-image-models)
+
+
+## Citations
+
+```bibtex
+@inproceedings{
+    anonymous2021an,
+    title={An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale},
+    author={Anonymous},
+    booktitle={Submitted to International Conference on Learning Representations},
+    year={2021},
+    url={https://openreview.net/forum?id=YicbFdNTTy},
+    note={under review}
+}
+```
