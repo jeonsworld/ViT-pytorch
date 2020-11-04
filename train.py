@@ -132,6 +132,7 @@ def valid(args, model, writer, test_loader, global_step):
     logger.info("Valid Accuracy: %2.5f" % accuracy)
 
     writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=global_step)
+    return accuracy
 
 
 def train(args, model):
@@ -178,7 +179,7 @@ def train(args, model):
     model.zero_grad()
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
     losses = AverageMeter()
-    global_step = 0
+    global_step, best_acc = 0, 0
     while True:
         model.train()
         epoch_iterator = tqdm(train_loader,
@@ -190,7 +191,7 @@ def train(args, model):
             batch = tuple(t.to(args.device) for t in batch)
             x, y = batch
             loss = model(x, y)
-            losses.update(loss.item())
+
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
             if args.fp16:
@@ -200,6 +201,7 @@ def train(args, model):
                 loss.backward()
 
             if (step+1) % args.gradient_accumulation_steps == 0:
+                losses.update(loss.item()*args.gradient_accumulation_steps)
                 if args.fp16:
                     torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
                 else:
@@ -216,9 +218,11 @@ def train(args, model):
                     writer.add_scalar("train/loss", scalar_value=losses.val, global_step=global_step)
                     writer.add_scalar("train/lr", scalar_value=scheduler.get_lr()[0], global_step=global_step)
                 if global_step % args.eval_every == 0 and args.local_rank in [-1, 0]:
-                    valid(args, model, writer, test_loader, global_step)
+                    accuracy = valid(args, model, writer, test_loader, global_step)
+                    if best_acc < accuracy:
+                        save_model(args, model, global_step)
+                        best_acc = accuracy
                     model.train()
-                    save_model(args, model, global_step)
 
                 if global_step % t_total == 0:
                     break
@@ -226,10 +230,6 @@ def train(args, model):
         if global_step % t_total == 0:
             break
 
-    if args.local_rank in [-1, 0]:
-        model_to_save = model.module if hasattr(model, 'module') else model
-        model_checkpoint = os.path.join(args.output_dir, "%s_last.bin" % args.name)
-        torch.save(model_to_save.state_dict(), model_checkpoint)
     writer.close()
     logger.info("End Training!")
 
