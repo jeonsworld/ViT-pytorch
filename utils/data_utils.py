@@ -1,5 +1,7 @@
 import logging
 
+import torch
+
 from torchvision import transforms, datasets
 from torch.utils.data import DataLoader, RandomSampler, DistributedSampler, SequentialSampler
 
@@ -8,6 +10,9 @@ logger = logging.getLogger(__name__)
 
 
 def get_loader(args):
+    if args.local_rank not in [-1, 0]:
+        torch.distributed.barrier()
+
     transform_train = transforms.Compose([
         transforms.RandomResizedCrop((args.img_size, args.img_size), scale=(0.05, 1.0)),
         transforms.ToTensor(),
@@ -31,13 +36,15 @@ def get_loader(args):
 
     else:
         trainset = datasets.CIFAR100(root="./data",
-                                    train=True,
-                                    download=True,
-                                    transform=transform_train)
+                                     train=True,
+                                     download=True,
+                                     transform=transform_train)
         testset = datasets.CIFAR100(root="./data",
-                                   train=False,
-                                   download=True,
-                                   transform=transform_test) if args.local_rank in [-1, 0] else None
+                                    train=False,
+                                    download=True,
+                                    transform=transform_test) if args.local_rank in [-1, 0] else None
+    if args.local_rank == 0:
+        torch.distributed.barrier()
 
     train_sampler = RandomSampler(trainset) if args.local_rank == -1 else DistributedSampler(trainset)
     test_sampler = SequentialSampler(testset)
