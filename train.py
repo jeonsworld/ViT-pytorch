@@ -137,9 +137,9 @@ def valid(args, model, writer, test_loader, global_step):
 
 def train(args, model):
     """ Train the model """
-    writer = SummaryWriter(log_dir=os.path.join("logs", args.name))
     if args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir, exist_ok=True)
+        writer = SummaryWriter(log_dir=os.path.join("logs", args.name))
 
     args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
 
@@ -200,7 +200,7 @@ def train(args, model):
             else:
                 loss.backward()
 
-            if (step+1) % args.gradient_accumulation_steps == 0:
+            if (step + 1) % args.gradient_accumulation_steps == 0:
                 losses.update(loss.item()*args.gradient_accumulation_steps)
                 if args.fp16:
                     torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
@@ -230,7 +230,8 @@ def train(args, model):
         if global_step % t_total == 0:
             break
 
-    writer.close()
+    if args.local_rank in [-1, 0]:
+        writer.close()
     logger.info("End Training!")
 
 
