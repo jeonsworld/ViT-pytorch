@@ -12,9 +12,15 @@ Vision Transformer achieve State-of-the-Art in image recognition task with stand
 
 ## Usage
 ### 1. Download Pre-trained model
-* [Available models](https://console.cloud.google.com/storage/vit_models/): ViT-B_16, ViT-B_32, ViT-L_32
+* [Available models](https://console.cloud.google.com/storage/vit_models/): ViT-B_16(85.8M), ViT-B_32(87.5M), ViT-L_32(305.5M), ViT-H_14(630.8M)
+  * imagenet21k pre-train: ViT-B_16, ViT-B_32, ViT-L_32, ViT-H_14
+  * imagenet21k pre-train + imagenet2012 fine-tuning: ViT-B_16-224, ViT-B_16, ViT-B_32, ViT-L_16-224, ViT-L_16, ViT-L_32
 ```
+# imagenet21k pre-train
 wget https://storage.googleapis.com/vit_models/imagenet21k/{MODEL_NAME}.npz
+
+# imagenet21k pre-train + imagenet2012 fine-tuning
+wget https://storage.googleapis.com/vit_models/imagenet21k+imagenet2012/{MODEL_NAME}.npz
 ```
 
 ### 2. Train Model
