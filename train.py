@@ -7,6 +7,8 @@ import os
 import random
 import numpy as np
 
+from datetime import timedelta
+
 import torch
 import torch.distributed as dist
 
@@ -296,7 +298,8 @@ def main():
     else:  # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         torch.cuda.set_device(args.local_rank)
         device = torch.device("cuda", args.local_rank)
-        torch.distributed.init_process_group(backend='nccl')
+        torch.distributed.init_process_group(backend='nccl',
+                                             timeout=timedelta(minutes=60))
         args.n_gpu = 1
     args.device = device
 
