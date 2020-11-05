@@ -52,17 +52,19 @@ To verify that the converted model weight is correct, we simply compare it with 
 | ViT-B_16 | CIFAR-10  |  384x384   |    0.9903     |     0.9906     |
 | ViT_B_16 | CIFAR-100 |  224x224   |       -       |     0.923      |
 | ViT_B_16 | CIFAR-100 |  384x384   |    0.9264     |     0.9228     |
-| ViT_L_32 | CIFAR-10  |  224x224   |       -       |      WIP       |
-| ViT_L_32 | CIFAR-100 |  224x224   |       -       |      WIP       |
+| ViT_L_32 | CIFAR-10  |  224x224   |       -       |     0.9903     |
+| ViT_L_32 | CIFAR-100 |  224x224   |       -       |     0.9273     |
 | ViT_H_14 | CIFAR-100 |  224x224   |       -       |      WIP       |
 
 ### imagenet-21k + imagenet2012
-* [**tensorboard**](https://tensorboard.dev/experiment/iwcA1CRKQMSP2RjMfjVyOw/#scalars)
+* [**tensorboard**](https://tensorboard.dev/experiment/CXOzjFRqTM6aLCk0jNXgAw/#scalars)
 
 |    model     |  dataset  | resolution |  acc   |
 |:------------:|:---------:|:----------:|:------:|
 | ViT-B_16-224 | CIFAR-10  |  224x224   |  0.99  |
 | ViT_B_16-224 | CIFAR-100 |  224x224   | 0.9245 |
+|   ViT-L_32   | CIFAR-10  |  224x224   | 0.9903 |
+|   ViT-L_32   | CIFAR-100 |  224x224   | 0.9285 |
 
 
 ### shorter train
