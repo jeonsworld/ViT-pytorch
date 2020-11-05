@@ -48,9 +48,9 @@ def simple_accuracy(preds, labels):
     return (preds == labels).mean()
 
 
-def save_model(args, model, global_step):
+def save_model(args, model):
     model_to_save = model.module if hasattr(model, 'module') else model
-    model_checkpoint = os.path.join(args.output_dir, "%s_%d.bin" % (args.name, global_step))
+    model_checkpoint = os.path.join(args.output_dir, "%s_checkpoint.bin" % args.name)
     torch.save(model_to_save.state_dict(), model_checkpoint)
     logger.info("Saved model checkpoint to [DIR: %s]", args.output_dir)
 
@@ -222,7 +222,7 @@ def train(args, model):
                 if global_step % args.eval_every == 0 and args.local_rank in [-1, 0]:
                     accuracy = valid(args, model, writer, test_loader, global_step)
                     if best_acc < accuracy:
-                        save_model(args, model, global_step)
+                        save_model(args, model)
                         best_acc = accuracy
                     model.train()
 
