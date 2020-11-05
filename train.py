@@ -234,6 +234,7 @@ def train(args, model):
 
     if args.local_rank in [-1, 0]:
         writer.close()
+    logger.info("Best Accuracy: \t%f" % best_acc)
     logger.info("End Training!")
 
 
