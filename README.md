@@ -46,15 +46,16 @@ To verify that the converted model weight is correct, we simply compare it with 
 ### imagenet-21k
 * [**tensorboard**](https://tensorboard.dev/experiment/Xo43kvEZQ2G72VQlvtWcPg/#scalars)
 
-|  model   |  dataset  | resolution | acc(official) | acc(this repo) |
-|:--------:|:---------:|:----------:|:-------------:|:--------------:|
-| ViT-B_16 | CIFAR-10  |  224x224   |       -       |     0.9908     |
-| ViT-B_16 | CIFAR-10  |  384x384   |    0.9903     |     0.9906     |
-| ViT_B_16 | CIFAR-100 |  224x224   |       -       |     0.923      |
-| ViT_B_16 | CIFAR-100 |  384x384   |    0.9264     |     0.9228     |
-| ViT_L_32 | CIFAR-10  |  224x224   |       -       |     0.9903     |
-| ViT_L_32 | CIFAR-100 |  224x224   |       -       |     0.9273     |
-| ViT_H_14 | CIFAR-100 |  224x224   |       -       |      WIP       |
+|  model   |  dataset  | resolution | acc(official) | acc(this repo) |  time   |
+|:--------:|:---------:|:----------:|:-------------:|:--------------:|:-------:|
+| ViT-B_16 | CIFAR-10  |  224x224   |       -       |     0.9908     | 3h 13m  |
+| ViT-B_16 | CIFAR-10  |  384x384   |    0.9903     |     0.9906     | 12h 25m |
+| ViT_B_16 | CIFAR-100 |  224x224   |       -       |     0.923      |  3h 9m  |
+| ViT_B_16 | CIFAR-100 |  384x384   |    0.9264     |     0.9228     | 12h 31m |
+| ViT_L_32 | CIFAR-10  |  224x224   |       -       |     0.9903     | 2h 11m  |
+| ViT_L_32 | CIFAR-100 |  224x224   |       -       |     0.9273     |  2h 9m  |
+| ViT_H_14 | CIFAR-100 |  224x224   |       -       |      WIP       |         |
+
 
 ### imagenet-21k + imagenet2012
 * [**tensorboard**](https://tensorboard.dev/experiment/CXOzjFRqTM6aLCk0jNXgAw/#scalars)
