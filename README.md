@@ -44,7 +44,7 @@ python3 train.py --name cifar10-100_500 --dataset cifar10 --model_type ViT-B_16 
 To verify that the converted model weight is correct, we simply compare it with the author's experimental results. We trained using mixed precision, and `--fp16_opt_level` was set to O2.
 
 ### imagenet-21k
-* [**tensorboard**](https://tensorboard.dev/experiment/Xo43kvEZQ2G72VQlvtWcPg/#scalars)
+* [**tensorboard**](https://tensorboard.dev/experiment/XvHOVNtMS02KOrmxOOJAEg/#scalars)
 
 |  model   |  dataset  | resolution | acc(official) | acc(this repo) |  time   |
 |:--------:|:---------:|:----------:|:-------------:|:--------------:|:-------:|
@@ -70,7 +70,7 @@ To verify that the converted model weight is correct, we simply compare it with 
 
 ### shorter train
 * In the experiment below, we used a resolution size (224x224).
-* [**tensorboard**](https://tensorboard.dev/experiment/lpknnMpHRT2qpVrSZi10Ag/)
+* [**tensorboard**](https://tensorboard.dev/experiment/lpknnMpHRT2qpVrSZi10Ag/#scalars)
 
 |  upstream   |  model   |  dataset  | total_steps /warmup_steps | acc(official) | acc(this repo) |
 |:-----------:|:--------:|:---------:|:-------------------------:|:-------------:|:--------------:|
