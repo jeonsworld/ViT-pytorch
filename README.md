@@ -84,7 +84,7 @@ To verify that the converted model weight is correct, we simply compare it with 
 The ViT consists of a Standard Transformer Encoder, and the encoder consists of Self-Attention and MLP module.
 The attention map for the input image can be visualized through the attention score of self-attention.
 
-Please refer to [visualize_attention_map](./visualize_attention_map.ipynb)
+Visualization code can be found at [visualize_attention_map](./visualize_attention_map.ipynb).
 
 ![fig3](./img/figure3.png)
 
