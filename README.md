@@ -80,6 +80,15 @@ To verify that the converted model weight is correct, we simply compare it with 
 | imagenet21k | ViT-B_16 | CIFAR-100 |         1000/100          |    0.9115     |     0.9216     |
 
 
+## Visualization
+The ViT consists of a Standard Transformer Encoder, and the encoder consists of Self-Attention and MLP module.
+The attention map for the input image can be visualized through the attention score of self-attention.
+
+Please refer to [visualize_attention_map.ipynb](./visualize_attention_map)
+
+![fig3](./img/figure3.png)
+
+
 ## Reference
 * [Google ViT](https://github.com/google-research/vision_transformer)
 * [Pytorch Image Models(timm)](https://github.com/rwightman/pytorch-image-models)

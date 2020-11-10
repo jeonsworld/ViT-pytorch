@@ -48,8 +48,9 @@ ACT2FN = {"gelu": torch.nn.functional.gelu, "relu": torch.nn.functional.relu, "s
 
 
 class Attention(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, vis):
         super(Attention, self).__init__()
+        self.vis = vis
         self.num_attention_heads = config.transformer["num_heads"]
         self.attention_head_size = int(config.hidden_size / self.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
@@ -81,6 +82,7 @@ class Attention(nn.Module):
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
         attention_probs = self.softmax(attention_scores)
+        weights = attention_probs if self.vis else None
         attention_probs = self.attn_dropout(attention_probs)
 
         context_layer = torch.matmul(attention_probs, value_layer)
@@ -89,7 +91,7 @@ class Attention(nn.Module):
         context_layer = context_layer.view(*new_context_layer_shape)
         attention_output = self.out(context_layer)
         attention_output = self.proj_dropout(attention_output)
-        return attention_output
+        return attention_output, weights
 
 
 class Mlp(nn.Module):
@@ -150,25 +152,25 @@ class Embeddings(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, vis):
         super(Block, self).__init__()
         self.hidden_size = config.hidden_size
         self.attention_norm = LayerNorm(config.hidden_size, eps=1e-6)
         self.ffn_norm = LayerNorm(config.hidden_size, eps=1e-6)
         self.ffn = Mlp(config)
-        self.attn = Attention(config)
+        self.attn = Attention(config, vis)
 
     def forward(self, x):
         h = x
         x = self.attention_norm(x)
-        x = self.attn(x)
+        x, weights = self.attn(x)
         x = x + h
 
         h = x
         x = self.ffn_norm(x)
         x = self.ffn(x)
         x = x + h
-        return x
+        return x, weights
 
     def load_from(self, weights, n_block):
         ROOT = f"Transformer/encoderblock_{n_block}"
@@ -209,53 +211,57 @@ class Block(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, vis):
         super(Encoder, self).__init__()
+        self.vis = vis
         self.layer = nn.ModuleList()
         self.encoder_norm = LayerNorm(config.hidden_size, eps=1e-6)
         for _ in range(config.transformer["num_layers"]):
-            layer = Block(config)
+            layer = Block(config, vis)
             self.layer.append(copy.deepcopy(layer))
 
     def forward(self, hidden_states):
+        attn_weights = []
         for layer_block in self.layer:
-            hidden_states = layer_block(hidden_states)
+            hidden_states, weights = layer_block(hidden_states)
+            if self.vis:
+                attn_weights.append(weights)
         encoded = self.encoder_norm(hidden_states)
-        return encoded
+        return encoded, attn_weights
 
 
 class Transformer(nn.Module):
-    def __init__(self, config, img_size):
+    def __init__(self, config, img_size, vis):
         super(Transformer, self).__init__()
         self.embeddings = Embeddings(config, img_size=img_size)
-        self.encoder = Encoder(config)
+        self.encoder = Encoder(config, vis)
 
     def forward(self, input_ids):
         embedding_output = self.embeddings(input_ids)
-        encoded = self.encoder(embedding_output)
-        return encoded
+        encoded, attn_weights = self.encoder(embedding_output)
+        return encoded, attn_weights
 
 
 class VisionTransformer(nn.Module):
-    def __init__(self, config, img_size=224, num_classes=21843, zero_head=False):
+    def __init__(self, config, img_size=224, num_classes=21843, zero_head=False, vis=False):
         super(VisionTransformer, self).__init__()
         self.num_classes = num_classes
         self.zero_head = zero_head
         self.classifier = config.classifier
 
-        self.transformer = Transformer(config, img_size)
+        self.transformer = Transformer(config, img_size, vis)
         self.head = Linear(config.hidden_size, num_classes)
 
     def forward(self, x, labels=None):
-        x = self.transformer(x)[:, 0]
-        logits = self.head(x)
+        x, attn_weights = self.transformer(x)
+        logits = self.head(x[:, 0])
 
         if labels is not None:
             loss_fct = CrossEntropyLoss()
             loss = loss_fct(logits.view(-1, self.num_classes), labels.view(-1))
             return loss
         else:
-            return logits
+            return logits, attn_weights
 
     def load_from(self, weights):
         with torch.no_grad():
