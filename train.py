@@ -106,7 +106,7 @@ def valid(args, model, writer, test_loader, global_step):
         batch = tuple(t.to(args.device) for t in batch)
         x, y = batch
         with torch.no_grad():
-            logits = model(x)
+            logits = model(x)[0]
 
             eval_loss = loss_fct(logits, y)
             eval_losses.update(eval_loss.item())
