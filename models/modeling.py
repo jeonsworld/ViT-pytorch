@@ -132,12 +132,12 @@ class Embeddings(nn.Module):
         if config.patches.get("grid") is not None:
             grid_size = config.patches["grid"]
             patch_size = (img_size[0] // 16 // grid_size[0], img_size[1] // 16 // grid_size[1])
-            n_patches = grid_size[0] * grid_size[1]
+            n_patches = (img_size[0] // 16) * (img_size[1] // 16)
             self.hybrid = True
         else:
             patch_size = _pair(config.patches["size"])
-            self.hybrid = False
             n_patches = (img_size[0] // patch_size[0]) * (img_size[1] // patch_size[1])
+            self.hybrid = False
 
         if self.hybrid:
             self.hybrid_model = ResNetV2(block_units=config.resnet.num_layers,
