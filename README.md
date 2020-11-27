@@ -12,17 +12,20 @@ Vision Transformer achieve State-of-the-Art in image recognition task with stand
 
 ## Usage
 ### 1. Download Pre-trained model (Google's Official Checkpoint)
-* [Available models](https://console.cloud.google.com/storage/vit_models/): ViT-B_16(**85.8M**), ViT-B_32(**87.5M**), ViT-L_16(**303.4M**), ViT-L_32(**305.5M**), ViT-H_14(**630.8M**)
+* [Available models](https://console.cloud.google.com/storage/vit_models/): ViT-B_16(**85.8M**), R50+ViT-B_16(**97.96M**), ViT-B_32(**87.5M**), ViT-L_16(**303.4M**), ViT-L_32(**305.5M**), ViT-H_14(**630.8M**)
   * imagenet21k pre-train models
     * ViT-B_16, ViT-B_32, ViT-L_16, ViT-L_32, ViT-H_14
   * imagenet21k pre-train + imagenet2012 fine-tuned models
     * ViT-B_16-224, ViT-B_16, ViT-B_32, ViT-L_16-224, ViT-L_16, ViT-L_32
+  * Hybrid Model([Resnet50](https://github.com/google-research/big_transfer) + Transformer)
+    * R50-ViT-B_16
 ```
 # imagenet21k pre-train
 wget https://storage.googleapis.com/vit_models/imagenet21k/{MODEL_NAME}.npz
 
 # imagenet21k pre-train + imagenet2012 fine-tuning
 wget https://storage.googleapis.com/vit_models/imagenet21k+imagenet2012/{MODEL_NAME}.npz
+
 ```
 
 ### 2. Train Model
@@ -46,15 +49,17 @@ To verify that the converted model weight is correct, we simply compare it with 
 ### imagenet-21k
 * [**tensorboard**](https://tensorboard.dev/experiment/XvHOVNtMS02KOrmxOOJAEg/#scalars)
 
-|  model   |  dataset  | resolution | acc(official) | acc(this repo) |  time   |
-|:--------:|:---------:|:----------:|:-------------:|:--------------:|:-------:|
-| ViT-B_16 | CIFAR-10  |  224x224   |       -       |     0.9908     | 3h 13m  |
-| ViT-B_16 | CIFAR-10  |  384x384   |    0.9903     |     0.9906     | 12h 25m |
-| ViT_B_16 | CIFAR-100 |  224x224   |       -       |     0.923      |  3h 9m  |
-| ViT_B_16 | CIFAR-100 |  384x384   |    0.9264     |     0.9228     | 12h 31m |
-| ViT_L_32 | CIFAR-10  |  224x224   |       -       |     0.9903     | 2h 11m  |
-| ViT_L_32 | CIFAR-100 |  224x224   |       -       |     0.9273     |  2h 9m  |
-| ViT_H_14 | CIFAR-100 |  224x224   |       -       |      WIP       |         |
+|    model     |  dataset  | resolution | acc(official) | acc(this repo) |  time   |
+|:------------:|:---------:|:----------:|:-------------:|:--------------:|:-------:|
+|   ViT-B_16   | CIFAR-10  |  224x224   |       -       |     0.9908     | 3h 13m  |
+|   ViT-B_16   | CIFAR-10  |  384x384   |    0.9903     |     0.9906     | 12h 25m |
+|   ViT_B_16   | CIFAR-100 |  224x224   |       -       |     0.923      |  3h 9m  |
+|   ViT_B_16   | CIFAR-100 |  384x384   |    0.9264     |     0.9228     | 12h 31m |
+| R50-ViT-B_16 | CIFAR-10  |  384x384   |     0.99      |      WIP       |         |
+| R50-ViT-B_16 | CIFAR-100 |  384x384   |    0.9231     |      WIP       |         |
+|   ViT_L_32   | CIFAR-10  |  224x224   |       -       |     0.9903     | 2h 11m  |
+|   ViT_L_32   | CIFAR-100 |  224x224   |       -       |     0.9273     |  2h 9m  |
+|   ViT_H_14   | CIFAR-100 |  224x224   |       -       |      WIP       |         |
 
 
 ### imagenet-21k + imagenet2012

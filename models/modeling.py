@@ -19,6 +19,8 @@ from scipy import ndimage
 
 import models.configs as configs
 
+from .modeling_resnet import ResNetV2
+
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +35,9 @@ ATTENTION_NORM = "LayerNorm_0"
 MLP_NORM = "LayerNorm_2"
 
 
-def np2th(weights):
+def np2th(weights, conv=False):
     """Possibly convert HWIO to OIHW."""
-    if weights.ndim == 4:
+    if conv:
         weights = weights.transpose([3, 2, 0, 1])
     return torch.from_numpy(weights)
 
@@ -124,10 +126,23 @@ class Embeddings(nn.Module):
     """
     def __init__(self, config, img_size, in_channels=3):
         super(Embeddings, self).__init__()
+        self.hybrid = None
         img_size = _pair(img_size)
-        patch_size = _pair(config.patches["size"])
-        n_patches = (img_size[0]//patch_size[0]) * (img_size[1]//patch_size[1])
 
+        if config.patches.get("grid") is not None:
+            grid_size = config.patches["grid"]
+            patch_size = (img_size[0] // 16 // grid_size[0], img_size[1] // 16 // grid_size[1])
+            n_patches = grid_size[0] * grid_size[1]
+            self.hybrid = True
+        else:
+            patch_size = _pair(config.patches["size"])
+            self.hybrid = False
+            n_patches = (img_size[0] // patch_size[0]) * (img_size[1] // patch_size[1])
+
+        if self.hybrid:
+            self.hybrid_model = ResNetV2(block_units=config.resnet.num_layers,
+                                         width_factor=config.resnet.width_factor)
+            in_channels = self.hybrid_model.width * 16
         self.patch_embeddings = Conv2d(in_channels=in_channels,
                                        out_channels=config.hidden_size,
                                        kernel_size=patch_size,
@@ -141,6 +156,8 @@ class Embeddings(nn.Module):
         B = x.shape[0]
         cls_tokens = self.cls_token.expand(B, -1, -1)
 
+        if self.hybrid:
+            x = self.hybrid_model(x)
         x = self.patch_embeddings(x)
         x = x.flatten(2)
         x = x.transpose(-1, -2)
@@ -272,7 +289,7 @@ class VisionTransformer(nn.Module):
                 self.head.weight.copy_(np2th(weights["head/kernel"]).t())
                 self.head.bias.copy_(np2th(weights["head/bias"]).t())
 
-            self.transformer.embeddings.patch_embeddings.weight.copy_(np2th(weights["embedding/kernel"]))
+            self.transformer.embeddings.patch_embeddings.weight.copy_(np2th(weights["embedding/kernel"], conv=True))
             self.transformer.embeddings.patch_embeddings.bias.copy_(np2th(weights["embedding/bias"]))
             self.transformer.embeddings.cls_token.copy_(np2th(weights["cls"]))
             self.transformer.encoder.encoder_norm.weight.copy_(np2th(weights["Transformer/encoder_norm/scale"]))
@@ -307,6 +324,17 @@ class VisionTransformer(nn.Module):
                 for uname, unit in block.named_children():
                     unit.load_from(weights, n_block=uname)
 
+            if self.transformer.embeddings.hybrid:
+                self.transformer.embeddings.hybrid_model.root.conv.weight.copy_(np2th(weights["conv_root/kernel"], conv=True))
+                gn_weight = np2th(weights["gn_root/scale"]).view(-1)
+                gn_bias = np2th(weights["gn_root/bias"]).view(-1)
+                self.transformer.embeddings.hybrid_model.root.gn.weight.copy_(gn_weight)
+                self.transformer.embeddings.hybrid_model.root.gn.bias.copy_(gn_bias)
+
+                for bname, block in self.transformer.embeddings.hybrid_model.body.named_children():
+                    for uname, unit in block.named_children():
+                        unit.load_from(weights, n_block=bname, n_unit=uname)
+
 
 CONFIGS = {
     'ViT-B_16': configs.get_b16_config(),
@@ -314,5 +342,6 @@ CONFIGS = {
     'ViT-L_16': configs.get_l16_config(),
     'ViT-L_32': configs.get_l32_config(),
     'ViT-H_14': configs.get_h14_config(),
+    'R50-ViT-B_16': configs.get_r50_b16_config(),
     'testing': configs.get_testing(),
 }

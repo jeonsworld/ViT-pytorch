@@ -69,6 +69,7 @@ def setup(args):
     logger.info("{}".format(config))
     logger.info("Training parameters %s", args)
     logger.info("Total Parameter: \t%2.1fM" % num_params)
+    print(num_params)
     return args, model
 
 
@@ -245,7 +246,9 @@ def main():
                         help="Name of this run. Used for monitoring.")
     parser.add_argument("--dataset", choices=["cifar10", "cifar100"], default="cifar10",
                         help="Which downstream task.")
-    parser.add_argument("--model_type", type=str, default="ViT-B_16",
+    parser.add_argument("--model_type", choices=["ViT-B_16", "ViT-B_32", "ViT-L_16",
+                                                 "ViT-L_32", "ViT-H_14", "R50-ViT-B_16"],
+                        default="ViT-B_16",
                         help="Which variant to use.")
     parser.add_argument("--pretrained_dir", type=str, default="checkpoint/ViT-B_16.npz",
                         help="Where to search for pretrained ViT models.")
