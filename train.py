@@ -88,7 +88,7 @@ def set_seed(args):
         torch.cuda.manual_seed_all(args.seed)
 
 
-def valid(args, model, writer, test_loader, global_step):
+def valid(args, model, writer, test_loader, global_step, is_normal=True):
     # Validation!
     eval_losses = AverageMeter()
 
@@ -99,7 +99,7 @@ def valid(args, model, writer, test_loader, global_step):
     model.eval()
     all_preds, all_label = [], []
     epoch_iterator = tqdm(test_loader,
-                          desc="Validating... (loss=X.X)",
+                          desc="Validating... (loss=X.X) (att_loss=X.X)",
                           bar_format="{l_bar}{r_bar}",
                           dynamic_ncols=True,
                           disable=args.local_rank not in [-1, 0])
@@ -112,15 +112,14 @@ def valid(args, model, writer, test_loader, global_step):
             logits, attn_weights = model(x)
 
             noised_x = make_noise(x)
-            loss = 0
+            att_loss = 0
             _, noisy_attn = model(noised_x)
             for attn_layer, noisy_attn_layer in zip(attn_weights, noisy_attn):
-                loss += att_criterion(attn_layer, noisy_attn_layer).item()
-            logger.info("\n")
-            logger.info("Attention Loss: %f" % loss)
+                att_loss += att_criterion(attn_layer, noisy_attn_layer).item()
 
-            eval_loss = loss_fct(logits, y)
-            eval_losses.update(eval_loss.item())
+            if is_normal:
+                eval_loss = loss_fct(logits, y)
+                eval_losses.update(eval_loss.item())
 
             preds = torch.argmax(logits, dim=-1)
 
@@ -134,7 +133,7 @@ def valid(args, model, writer, test_loader, global_step):
             all_label[0] = np.append(
                 all_label[0], y.detach().cpu().numpy(), axis=0
             )
-        epoch_iterator.set_description("Validating... (loss=%2.5f)" % eval_losses.val)
+        epoch_iterator.set_description("Validating... (loss=%2.5f) (att_loss=%2.6f)" % (eval_losses.val, att_loss))
 
     all_preds, all_label = all_preds[0], all_label[0]
     accuracy = simple_accuracy(all_preds, all_label)
@@ -248,7 +247,7 @@ def train(args, model):
                     writer.add_scalar("train/lr", scalar_value=scheduler.get_lr()[0], global_step=global_step)
                 if global_step % args.eval_every == 0 and args.local_rank in [-1, 0]:
                     accuracy = valid(args, model, writer, normal_test_loader, global_step)
-                    outlier = valid(args, model, writer, outlier_test_loader, global_step)
+                    outlier = valid(args, model, writer, outlier_test_loader, global_step, is_normal=False)
                     if best_acc < accuracy:
                         save_model(args, model)
                         best_acc = accuracy
