@@ -14,15 +14,15 @@ class CifarOutlierDataset(Dataset):
 
         self.data = np.array(self.dataset.data)
         self.labels = np.array(self.dataset.targets)
-        indices = [i for i in range(len(self.labels)) if ((is_normal and self.labels[i] < 5) or ((not is_normal) and self.labels[i] >= 5))]
-        self.length = len(indices)
-        self.data = self.data[indices]
-        self.labels = self.labels[indices]  #todo optimize memory
+        self.indices = [i for i in range(len(self.labels)) if ((is_normal and self.labels[i] < 5) or ((not is_normal) and self.labels[i] >= 5))]
+        # self.data = self.data[indices]
+        # self.labels = self.labels[indices]  #todo optimize memory
 
 
     def __len__(self):
-        return self.length
+        return len(self.indices)
 
 
     def __getitem__(self, idx):
-        return self.data[idx], self.labels[idx]
+        return self.dataset.__getitem__(self.indices[idx])
+        # return self.data[idx], self.labels[idx]
