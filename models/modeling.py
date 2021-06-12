@@ -276,7 +276,7 @@ class VisionTransformer(nn.Module):
         if labels is not None:
             loss_fct = CrossEntropyLoss()
             loss = loss_fct(logits.view(-1, self.num_classes), labels.view(-1))
-            return loss
+            return loss, attn_weights
         else:
             return logits, attn_weights
 

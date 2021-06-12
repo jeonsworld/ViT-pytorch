@@ -19,7 +19,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from models.modeling import VisionTransformer, CONFIGS
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
-from utils.data_utils import get_loader
+from utils.data_utils import get_loader, get_cifar_outlier_loader
 from utils.dist_util import get_world_size
 
 
@@ -59,10 +59,12 @@ def setup(args):
     # Prepare model
     config = CONFIGS[args.model_type]
 
-    num_classes = 10 if args.dataset == "cifar10" else 100
+    # num_classes = 10 if args.dataset == "cifar10" else 100
+    num_classes = 5
 
-    model = VisionTransformer(config, args.img_size, zero_head=True, num_classes=num_classes)
-    model.load_from(np.load(args.pretrained_dir))
+    model = VisionTransformer(config, args.img_size, zero_head=True, num_classes=num_classes, vis=True)
+    if args.pretrained_dir: # if false train from scratch
+        model.load_from(np.load(args.pretrained_dir))
     model.to(args.device)
     num_params = count_parameters(model)
 
@@ -102,11 +104,20 @@ def valid(args, model, writer, test_loader, global_step):
                           dynamic_ncols=True,
                           disable=args.local_rank not in [-1, 0])
     loss_fct = torch.nn.CrossEntropyLoss()
+    att_criterion = torch.nn.MSELoss()
     for step, batch in enumerate(epoch_iterator):
         batch = tuple(t.to(args.device) for t in batch)
         x, y = batch
         with torch.no_grad():
-            logits = model(x)[0]
+            logits, attn_weights = model(x)
+
+            noised_x = make_noise(x)
+            loss = 0
+            _, noisy_attn = model(noised_x)
+            for attn_layer, noisy_attn_layer in zip(attn_weights, noisy_attn):
+                loss += att_criterion(attn_layer, noisy_attn_layer).item()
+            logger.info("\n")
+            logger.info("Attention Loss: %f" % loss)
 
             eval_loss = loss_fct(logits, y)
             eval_losses.update(eval_loss.item())
@@ -138,6 +149,13 @@ def valid(args, model, writer, test_loader, global_step):
     return accuracy
 
 
+def make_noise(x):
+    epsilon = 8/255
+    delta = torch.zeros_like(x).cuda()
+    delta.uniform_(-epsilon, epsilon)
+    return torch.clamp(delta + x, 0, 1)
+
+
 def train(args, model):
     """ Train the model """
     if args.local_rank in [-1, 0]:
@@ -147,7 +165,8 @@ def train(args, model):
     args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
 
     # Prepare dataset
-    train_loader, test_loader = get_loader(args)
+    # train_loader, test_loader = get_loader(args)
+    normal_train_loader, normal_test_loader, outlier_train_loader, outlier_test_loader = get_cifar_outlier_loader(args)
 
     # Prepare optimizer and scheduler
     optimizer = torch.optim.SGD(model.parameters(),
@@ -183,9 +202,10 @@ def train(args, model):
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
     losses = AverageMeter()
     global_step, best_acc = 0, 0
+    att_criterion = torch.nn.MSELoss()
     while True:
         model.train()
-        epoch_iterator = tqdm(train_loader,
+        epoch_iterator = tqdm(normal_train_loader,
                               desc="Training (X / X Steps) (loss=X.X)",
                               bar_format="{l_bar}{r_bar}",
                               dynamic_ncols=True,
@@ -193,7 +213,13 @@ def train(args, model):
         for step, batch in enumerate(epoch_iterator):
             batch = tuple(t.to(args.device) for t in batch)
             x, y = batch
-            loss = model(x, y)
+            loss, attn_weights = model(x, y)
+
+            noised_x = make_noise(x)
+            _, noisy_attn = model(noised_x, y)
+            for attn_layer, noisy_attn_layer in zip(attn_weights, noisy_attn):
+                loss += att_criterion(attn_layer, noisy_attn_layer)
+
 
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
@@ -221,7 +247,8 @@ def train(args, model):
                     writer.add_scalar("train/loss", scalar_value=losses.val, global_step=global_step)
                     writer.add_scalar("train/lr", scalar_value=scheduler.get_lr()[0], global_step=global_step)
                 if global_step % args.eval_every == 0 and args.local_rank in [-1, 0]:
-                    accuracy = valid(args, model, writer, test_loader, global_step)
+                    accuracy = valid(args, model, writer, normal_test_loader, global_step)
+                    outlier = valid(args, model, writer, outlier_test_loader, global_step)
                     if best_acc < accuracy:
                         save_model(args, model)
                         best_acc = accuracy
@@ -250,7 +277,7 @@ def main():
                                                  "ViT-L_32", "ViT-H_14", "R50-ViT-B_16"],
                         default="ViT-B_16",
                         help="Which variant to use.")
-    parser.add_argument("--pretrained_dir", type=str, default="checkpoint/ViT-B_16.npz",
+    parser.add_argument("--pretrained_dir", type=str, # default="checkpoint/ViT-B_16.npz",
                         help="Where to search for pretrained ViT models.")
     parser.add_argument("--output_dir", default="output", type=str,
                         help="The output directory where checkpoints will be written.")

@@ -11,12 +11,8 @@ class CifarOutlierDataset(Dataset):
                                     train=train,
                                     download=True,
                                     transform=transform)
-
-        self.data = np.array(self.dataset.data)
-        self.labels = np.array(self.dataset.targets)
-        self.indices = [i for i in range(len(self.labels)) if ((is_normal and self.labels[i] < 5) or ((not is_normal) and self.labels[i] >= 5))]
-        # self.data = self.data[indices]
-        # self.labels = self.labels[indices]  #todo optimize memory
+        labels = np.array(self.dataset.targets)
+        self.indices = [i for i in range(len(labels)) if ((is_normal and labels[i] < 5) or ((not is_normal) and labels[i] >= 5))]
 
 
     def __len__(self):
@@ -25,4 +21,3 @@ class CifarOutlierDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.dataset.__getitem__(self.indices[idx])
-        # return self.data[idx], self.labels[idx]
