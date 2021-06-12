@@ -91,6 +91,7 @@ def set_seed(args):
 def valid(args, model, writer, test_loader, global_step, is_normal=True):
     # Validation!
     eval_losses = AverageMeter()
+    att_losses = AverageMeter()
 
     logger.info("***** Running Validation *****")
     logger.info("  Num steps = %d", len(test_loader))
@@ -117,6 +118,7 @@ def valid(args, model, writer, test_loader, global_step, is_normal=True):
             for attn_layer, noisy_attn_layer in zip(attn_weights, noisy_attn):
                 att_loss += att_criterion(attn_layer, noisy_attn_layer).item()
 
+            att_losses.update(att_loss)
             if is_normal:
                 eval_loss = loss_fct(logits, y)
                 eval_losses.update(eval_loss.item())
@@ -133,7 +135,7 @@ def valid(args, model, writer, test_loader, global_step, is_normal=True):
             all_label[0] = np.append(
                 all_label[0], y.detach().cpu().numpy(), axis=0
             )
-        epoch_iterator.set_description("Validating... (loss=%2.5f) (att_loss=%2.6f)" % (eval_losses.val, att_loss))
+        epoch_iterator.set_description("Validating... (loss=%2.5f) (att_loss=%2.6f)" % (eval_losses.val, att_losses.val))
 
     all_preds, all_label = all_preds[0], all_label[0]
     accuracy = simple_accuracy(all_preds, all_label)
@@ -142,6 +144,7 @@ def valid(args, model, writer, test_loader, global_step, is_normal=True):
     logger.info("Validation Results")
     logger.info("Global Steps: %d" % global_step)
     logger.info("Valid Loss: %2.5f" % eval_losses.avg)
+    logger.info("Attention Loss: %2.6f" % att_losses.avg)
     logger.info("Valid Accuracy: %2.5f" % accuracy)
 
     writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=global_step)
