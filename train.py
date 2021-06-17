@@ -19,7 +19,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from models.modeling import VisionTransformer, CONFIGS
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
-from utils.data_utils import get_loader, get_cifar_outlier_loader
+from utils.data_utils import get_loader, get_outlier_loader
 from utils.dist_util import get_world_size
 
 
@@ -168,7 +168,7 @@ def train(args, model):
 
     # Prepare dataset
     # train_loader, test_loader = get_loader(args)
-    normal_train_loader, normal_test_loader, outlier_train_loader, outlier_test_loader = get_cifar_outlier_loader(args)
+    normal_train_loader, normal_test_loader, outlier_train_loader, outlier_test_loader = get_outlier_loader(args)
 
     # Prepare optimizer and scheduler
     optimizer = torch.optim.SGD(model.parameters(),
@@ -273,7 +273,7 @@ def main():
     # Required parameters
     parser.add_argument("--name", required=True,
                         help="Name of this run. Used for monitoring.")
-    parser.add_argument("--dataset", choices=["cifar10", "cifar100"], default="cifar10",
+    parser.add_argument("--dataset", choices=["CIFAR10", "CIFAR100", "MNIST"], default="MNIST",
                         help="Which downstream task.")
     parser.add_argument("--model_type", choices=["ViT-B_16", "ViT-B_32", "ViT-L_16",
                                                  "ViT-L_32", "ViT-H_14", "R50-ViT-B_16"],
