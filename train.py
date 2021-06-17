@@ -21,7 +21,7 @@ from models.modeling import VisionTransformer, CONFIGS
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.data_utils import get_loader, get_cifar_outlier_loader
 from utils.dist_util import get_world_size
-
+from utils.computational_utils import compute_input_gradient
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +158,22 @@ def make_noise(x):
     return torch.clamp(delta + x, 0, 1)
 
 
+def attack_loss(x, model, target_out, target_attn, lambda_out_loss=1.0):
+    out, attn = model(x)
+    loss = lambda_out_loss * torch.nn.functional.cross_entropy(out, target_out) + torch.nn.functional.mse_loss(attn, target_attn)
+    return loss
+
+
+def fgsm_attack(x, model, eps=1e-3, n_iter=50):
+    new_x = x.detach().clone()
+    target_out, target_attn = model(x)
+    for i in range(n_iter):
+        model.zero_grad()
+        grad = compute_input_gradient(attack_loss, new_x, model, target_out, target_attn)
+        new_x = torch.clamp(new_x + eps * grad.sign(), 0, 1)
+    return new_x
+
+
 def train(args, model):
     """ Train the model """
     if args.local_rank in [-1, 0]:
@@ -217,7 +233,9 @@ def train(args, model):
             x, y = batch
             loss, attn_weights = model(x, y)
 
-            noised_x = make_noise(x)
+            # noised_x = make_noise(x)
+            noised_x = fgsm_attack(x, model)
+
             _, noisy_attn = model(noised_x, y)
             for attn_layer, noisy_attn_layer in zip(attn_weights, noisy_attn):
                 loss += att_criterion(attn_layer, noisy_attn_layer)
