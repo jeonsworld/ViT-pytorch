@@ -244,6 +244,8 @@ class Encoder(nn.Module):
             if self.vis:
                 attn_weights.append(weights)
         encoded = self.encoder_norm(hidden_states)
+        # attn_weights = torch.tensor(attn_weights).transpose(1, 0)
+        # TODO
         return encoded, attn_weights
 
 

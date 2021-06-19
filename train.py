@@ -169,7 +169,7 @@ def fgsm_attack(x, model, eps=1e-3, n_iter=50):
     target_out, target_attn = model(x)
     for i in range(n_iter):
         model.zero_grad()
-        grad = compute_input_gradient(attack_loss, new_x, model, target_out, target_attn)
+        grad = compute_input_gradient(attack_loss, new_x, model=model, target_out=target_out, target_attn=target_attn)
         new_x = torch.clamp(new_x + eps * grad.sign(), 0, 1)
     return new_x
 
