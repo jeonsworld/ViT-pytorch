@@ -112,7 +112,8 @@ def valid(args, model, writer, test_loader, global_step, is_normal=True):
         with torch.no_grad():
             logits, attn_weights = model(x)
 
-            noised_x = make_noise(x)
+            # noised_x = make_noise(x)
+            noised_x = fgsm_attack(x, model)
             att_loss = 0
             _, noisy_attn = model(noised_x)
             for attn_layer, noisy_attn_layer in zip(attn_weights, noisy_attn):
