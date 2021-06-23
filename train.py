@@ -161,6 +161,11 @@ def make_noise(x):
 
 def attack_loss(x, model, target_out, target_attn, lambda_out_loss=1.0):
     out, attn = model(x)
+    
+    # target_out = torch.argmax(target_out, 1)
+    # target_attn = torch.stack(target_attn, dim=1)
+    attn = torch.stack(attn, dim=1)
+
     loss = lambda_out_loss * torch.nn.functional.cross_entropy(out, target_out) + torch.nn.functional.mse_loss(attn, target_attn)
     return loss
 
@@ -168,6 +173,8 @@ def attack_loss(x, model, target_out, target_attn, lambda_out_loss=1.0):
 def fgsm_attack(x, model, eps=1e-3, n_iter=50):
     new_x = x.detach().clone()
     target_out, target_attn = model(x)
+    target_out = torch.argmax(target_out, 1).data
+    target_attn = torch.stack(target_attn, dim=1).data
     for i in range(n_iter):
         model.zero_grad()
         grad = compute_input_gradient(attack_loss, new_x, model=model, target_out=target_out, target_attn=target_attn)
