@@ -23,6 +23,8 @@ from utils.data_utils import get_loader, get_cifar_outlier_loader
 from utils.dist_util import get_world_size
 from utils.computational_utils import compute_input_gradient
 
+from sklearn.metrics import roc_auc_score
+
 logger = logging.getLogger(__name__)
 
 
@@ -99,6 +101,7 @@ def valid(args, model, writer, test_loader, global_step, is_normal=True):
 
     model.eval()
     all_preds, all_label = [], []
+    all_attn_loss = []
     epoch_iterator = tqdm(test_loader,
                           desc="Validating... (loss=X.X) (att_loss=X.X)",
                           bar_format="{l_bar}{r_bar}",
@@ -120,6 +123,7 @@ def valid(args, model, writer, test_loader, global_step, is_normal=True):
                 att_loss += att_criterion(attn_layer, noisy_attn_layer).item()
 
             att_losses.update(att_loss)
+            all_attn_loss.append(att_loss)
             if is_normal:
                 eval_loss = loss_fct(logits, y)
                 eval_losses.update(eval_loss.item())
@@ -149,7 +153,7 @@ def valid(args, model, writer, test_loader, global_step, is_normal=True):
     logger.info("Valid Accuracy: %2.5f" % accuracy)
 
     writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=global_step)
-    return accuracy
+    return accuracy, all_attn_loss
 
 
 def make_noise(x):
@@ -275,8 +279,9 @@ def train(args, model):
                     writer.add_scalar("train/loss", scalar_value=losses.val, global_step=global_step)
                     writer.add_scalar("train/lr", scalar_value=scheduler.get_lr()[0], global_step=global_step)
                 if global_step % args.eval_every == 0 and args.local_rank in [-1, 0]:
-                    accuracy = valid(args, model, writer, normal_test_loader, global_step)
-                    outlier = valid(args, model, writer, outlier_test_loader, global_step, is_normal=False)
+                    accuracy, normal_attn_losses = valid(args, model, writer, normal_test_loader, global_step)
+                    outlier, outlier_attn_losses = valid(args, model, writer, outlier_test_loader, global_step, is_normal=False)
+                    logger.info('auc score: %.5f' % roc_auc_score([0]*len(normal_attn_losses) + [1]*len(outlier_attn_losses), normal_attn_losses + outlier_attn_losses))
                     if best_acc < accuracy:
                         save_model(args, model)
                         best_acc = accuracy
