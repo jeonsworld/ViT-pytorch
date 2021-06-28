@@ -174,7 +174,7 @@ def attack_loss(x, model, target_out, target_attn, lambda_out_loss=1.0):
     return loss
 
 
-def fgsm_attack(x, model, eps=1e-3, n_iter=50):
+def fgsm_attack(x, model, eps=0.03, n_iter=10):
     new_x = x.detach().clone()
     target_out, target_attn = model(x)
     target_out = torch.argmax(target_out, 1).data
@@ -182,7 +182,7 @@ def fgsm_attack(x, model, eps=1e-3, n_iter=50):
     for i in range(n_iter):
         model.zero_grad()
         grad = compute_input_gradient(attack_loss, new_x, model=model, target_out=target_out, target_attn=target_attn)
-        new_x = torch.clamp(new_x + eps * grad.sign(), 0, 1)
+        new_x = torch.clamp(new_x + (2.5/n_iter) * eps * grad.sign(), 0, 1)
     return new_x
 
 
