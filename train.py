@@ -6,6 +6,7 @@ import argparse
 import os
 import random
 import numpy as np
+import pandas as pd
 
 from datetime import timedelta
 
@@ -22,10 +23,13 @@ from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.data_utils import get_loader, get_outlier_loader
 from utils.dist_util import get_world_size
 from utils.computational_utils import compute_input_gradient
+from utils.file_utils import CSV_Writer
 
 from sklearn.metrics import roc_auc_score
 
 logger = logging.getLogger(__name__)
+train_csv_writer = None
+val_csv_writer = None
 
 
 class AverageMeter(object):
@@ -282,7 +286,9 @@ def train(args, model):
                 if global_step % args.eval_every == 0 and args.local_rank in [-1, 0]:
                     accuracy, normal_attn_losses = valid(args, model, writer, normal_test_loader, global_step)
                     outlier, outlier_attn_losses = valid(args, model, writer, outlier_test_loader, global_step, is_normal=False)
-                    logger.info('auc score: %.5f' % roc_auc_score([0]*len(normal_attn_losses) + [1]*len(outlier_attn_losses), normal_attn_losses + outlier_attn_losses))
+                    auc = roc_auc_score([0]*len(normal_attn_losses) + [1]*len(outlier_attn_losses), normal_attn_losses + outlier_attn_losses)
+                    logger.info('auc score: %.5f' % auc)
+                    val_csv_writer.add_record([global_step, auc])
                     if best_acc < accuracy:
                         save_model(args, model)
                         best_acc = accuracy
@@ -290,6 +296,7 @@ def train(args, model):
 
                 if global_step % t_total == 0:
                     break
+        train_csv_writer.add_record([global_step, losses.val])
         losses.reset()
         if global_step % t_total == 0:
             break
@@ -305,6 +312,8 @@ def main():
     # Required parameters
     parser.add_argument("--name", required=True,
                         help="Name of this run. Used for monitoring.")
+    parser.add_argument("--csv_path", default='./Results/',
+                        help="path to store csv result.")
     parser.add_argument("--dataset", choices=["CIFAR10", "CIFAR100", "MNIST"], default="MNIST",
                         help="Which downstream task.")
     parser.add_argument("--model_type", choices=["ViT-B_16", "ViT-B_32", "ViT-L_16",
@@ -355,6 +364,11 @@ def main():
                              "0 (default value): dynamic loss scaling.\n"
                              "Positive power of 2: static loss scaling value.\n")
     args = parser.parse_args()
+
+    global train_csv_writer
+    global val_csv_writer
+    train_csv_writer = CSV_Writer(path=args.csv_path + args.name + '_train.csv', columns=(['global_step', 'train_loss']))
+    val_csv_writer = CSV_Writer(path=args.csv_path + args.name + '_val.csv', columns=(['global_step', 'auc']))
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1:
