@@ -112,11 +112,11 @@ def valid(args, model, writer, test_loader, global_step, is_normal=True):
     for step, batch in enumerate(epoch_iterator):
         batch = tuple(t.to(args.device) for t in batch)
         x, y = batch
+        noised_x = fgsm_attack(x, model)
         with torch.no_grad():
             logits, attn_weights = model(x)
 
             # noised_x = make_noise(x)
-            noised_x = fgsm_attack(x, model)
             att_loss = 0
             _, noisy_attn = model(noised_x)
             for attn_layer, noisy_attn_layer in zip(attn_weights, noisy_attn):
@@ -174,10 +174,11 @@ def attack_loss(x, model, target_out, target_attn, lambda_out_loss=1.0):
     return loss
 
 
-def fgsm_attack(x, model, eps=0.03, n_iter=10):
+def fgsm_attack(x, model, target_out=None, eps=0.03, n_iter=10):
     new_x = x.detach().clone()
-    target_out, target_attn = model(x)
-    target_out = torch.argmax(target_out, 1).data
+    out, target_attn = model(x)
+    if target_out is None:
+        target_out = torch.argmax(out, 1).data
     target_attn = torch.stack(target_attn, dim=1).data
     for i in range(n_iter):
         model.zero_grad()
@@ -246,7 +247,7 @@ def train(args, model):
             loss, attn_weights = model(x, y)
 
             # noised_x = make_noise(x)
-            noised_x = fgsm_attack(x, model)
+            noised_x = fgsm_attack(x, model, target_out=y)
 
             _, noisy_attn = model(noised_x, y)
             for attn_layer, noisy_attn_layer in zip(attn_weights, noisy_attn):
@@ -319,7 +320,7 @@ def main():
                         help="Resolution size")
     parser.add_argument("--train_batch_size", default=512, type=int,
                         help="Total batch size for training.")
-    parser.add_argument("--eval_batch_size", default=64, type=int,
+    parser.add_argument("--eval_batch_size", default=16, type=int,
                         help="Total batch size for eval.")
     parser.add_argument("--eval_every", default=100, type=int,
                         help="Run prediction on validation set every so many steps."
