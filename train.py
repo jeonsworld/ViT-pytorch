@@ -116,7 +116,7 @@ def valid(args, model, writer, test_loader, global_step, is_normal=True):
     for step, batch in enumerate(epoch_iterator):
         batch = tuple(t.to(args.device) for t in batch)
         x, y = batch
-        noised_x = fgsm_attack(x, model)
+        noised_x = fgsm_attack(x, model, eps=args.fgsm_eps, n_iter=args.fgsm_iter)
         with torch.no_grad():
             logits, attn_weights = model(x)
 
@@ -251,7 +251,7 @@ def train(args, model):
             loss, attn_weights = model(x, y)
 
             # noised_x = make_noise(x)
-            noised_x = fgsm_attack(x, model, target_out=y)
+            noised_x = fgsm_attack(x, model, target_out=y, eps=args.fgsm_eps, n_iter=args.fgsm_iter)
 
             _, noisy_attn = model(noised_x, y)
             for attn_layer, noisy_attn_layer in zip(attn_weights, noisy_attn):
@@ -363,6 +363,11 @@ def main():
                         help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
                              "0 (default value): dynamic loss scaling.\n"
                              "Positive power of 2: static loss scaling value.\n")
+
+    parser.add_argument("--fgsm_iter", type=int, default=10,
+                        help="number of iterations in fgsm")
+    parser.add_argument("--fgsm_eps", type=float, default=0.03,
+                        help="epsilon in fgsm")
     args = parser.parse_args()
 
     global train_csv_writer
