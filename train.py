@@ -116,7 +116,7 @@ def valid(args, model, writer, test_loader, global_step, is_normal=True):
     for step, batch in enumerate(epoch_iterator):
         batch = tuple(t.to(args.device) for t in batch)
         x, y = batch
-        noised_x = fgsm_attack(x, model, eps=args.fgsm_eps, n_iter=args.fgsm_iter)
+        noised_x = fgsm_attack(x, model, eps=args.fgsm_eps, n_iter=args.fgsm_iter, label_loss_coef=args.label_loss_coef)
         with torch.no_grad():
             logits, attn_weights = model(x)
 
@@ -167,18 +167,18 @@ def make_noise(x):
     return torch.clamp(delta + x, 0, 1)
 
 
-def attack_loss(x, model, target_out, target_attn, lambda_out_loss=1.0):
+def attack_loss(x, model, target_out, target_attn, label_loss_coef=1.0):
     out, attn = model(x)
     
     # target_out = torch.argmax(target_out, 1)
     # target_attn = torch.stack(target_attn, dim=1)
     attn = torch.stack(attn, dim=1)
 
-    loss = lambda_out_loss * torch.nn.functional.cross_entropy(out, target_out) + torch.nn.functional.mse_loss(attn, target_attn)
+    loss = label_loss_coef * torch.nn.functional.cross_entropy(out, target_out) + torch.nn.functional.mse_loss(attn, target_attn)
     return loss
 
 
-def fgsm_attack(x, model, target_out=None, eps=0.03, n_iter=10):
+def fgsm_attack(x, model, target_out=None, eps=0.03, n_iter=10, label_loss_coef=1.0):
     new_x = x.detach().clone()
     out, target_attn = model(x)
     if target_out is None:
@@ -186,7 +186,7 @@ def fgsm_attack(x, model, target_out=None, eps=0.03, n_iter=10):
     target_attn = torch.stack(target_attn, dim=1).data
     for i in range(n_iter):
         model.zero_grad()
-        grad = compute_input_gradient(attack_loss, new_x, model=model, target_out=target_out, target_attn=target_attn)
+        grad = compute_input_gradient(attack_loss, new_x, model=model, target_out=target_out, target_attn=target_attn, label_loss_coef=label_loss_coef)
         new_x = torch.clamp(new_x + (2.5/n_iter) * eps * grad.sign(), 0, 1)
     return new_x
 
@@ -251,7 +251,7 @@ def train(args, model):
             loss, attn_weights = model(x, y)
 
             # noised_x = make_noise(x)
-            noised_x = fgsm_attack(x, model, target_out=y, eps=args.fgsm_eps, n_iter=args.fgsm_iter)
+            noised_x = fgsm_attack(x, model, target_out=y, eps=args.fgsm_eps, n_iter=args.fgsm_iter, label_loss_coef=args.label_loss_coef)
 
             _, noisy_attn = model(noised_x, y)
             for attn_layer, noisy_attn_layer in zip(attn_weights, noisy_attn):
@@ -364,6 +364,8 @@ def main():
                              "0 (default value): dynamic loss scaling.\n"
                              "Positive power of 2: static loss scaling value.\n")
 
+    parser.add_argument('--label_loss_coef', type=float, default=1.0,
+                        help="coefficient of ce_loss for labels")
     parser.add_argument("--fgsm_iter", type=int, default=10,
                         help="number of iterations in fgsm")
     parser.add_argument("--fgsm_eps", type=float, default=0.03,
