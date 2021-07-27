@@ -94,7 +94,7 @@ def set_seed(args):
         torch.cuda.manual_seed_all(args.seed)
 
 
-def valid(args, model, writer, test_loader, global_step, is_normal=True):
+def valid(args, model, writer, test_loader, epoch, is_normal=True):
     # Validation!
     eval_losses = AverageMeter()
     att_losses = AverageMeter()
@@ -154,12 +154,12 @@ def valid(args, model, writer, test_loader, global_step, is_normal=True):
 
     logger.info("\n")
     logger.info("Validation Results")
-    logger.info("Global Steps: %d" % global_step)
+    logger.info("Epoch: %d" % epoch)
     logger.info("Valid Loss: %2.5f" % eval_losses.avg)
     logger.info("Attention Loss: %2.6f" % att_losses.avg)
     logger.info("Valid Accuracy: %2.5f" % accuracy)
 
-    writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=global_step)
+    writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=epoch)
     return accuracy, all_attn_loss
 
 
@@ -200,7 +200,6 @@ def train(args, model):
     args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
 
     # Prepare dataset
-    # train_loader, test_loader = get_loader(args)
     normal_train_loader, normal_test_loader, outlier_train_loader, outlier_test_loader = get_outlier_loader(args)
 
     # Prepare optimizer and scheduler
@@ -236,7 +235,7 @@ def train(args, model):
     model.zero_grad()
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
     losses = AverageMeter()
-    global_step, best_acc = 0, 0
+    epoch, best_acc = 0, 0
     att_criterion = torch.nn.MSELoss()
     while True:
         model.train()
@@ -244,7 +243,8 @@ def train(args, model):
                               desc="Training (X / X Steps) (loss=X.X)",
                               bar_format="{l_bar}{r_bar}",
                               dynamic_ncols=True,
-                              disable=args.local_rank not in [-1, 0])
+                              disable=args.local_rank not in [-1, 0],
+                              position=0, leave=True)
         for step, batch in enumerate(epoch_iterator):
             batch = tuple(t.to(args.device) for t in batch)
             x, y = batch
@@ -274,30 +274,31 @@ def train(args, model):
                 scheduler.step()
                 optimizer.step()
                 optimizer.zero_grad()
-                global_step += 1
 
                 epoch_iterator.set_description(
-                    "Training (%d / %d Steps) (loss=%2.5f)" % (global_step, t_total, losses.val)
+                    "Training (%d / %d Steps) (loss=%2.5f)" % (epoch, t_total, losses.val)
                 )
                 if args.local_rank in [-1, 0]:
-                    writer.add_scalar("train/loss", scalar_value=losses.val, global_step=global_step)
-                    writer.add_scalar("train/lr", scalar_value=scheduler.get_lr()[0], global_step=global_step)
-                if global_step % args.eval_every == 0 and args.local_rank in [-1, 0]:
-                    accuracy, normal_attn_losses = valid(args, model, writer, normal_test_loader, global_step)
-                    outlier, outlier_attn_losses = valid(args, model, writer, outlier_test_loader, global_step, is_normal=False)
-                    auc = roc_auc_score([0]*len(normal_attn_losses) + [1]*len(outlier_attn_losses), normal_attn_losses + outlier_attn_losses)
-                    logger.info('auc score: %.5f' % auc)
-                    val_csv_writer.add_record([global_step, auc])
-                    if best_acc < accuracy:
-                        save_model(args, model)
-                        best_acc = accuracy
-                    model.train()
-
-                if global_step % t_total == 0:
+                    writer.add_scalar("train/loss", scalar_value=losses.val, global_step=epoch)
+                    writer.add_scalar("train/lr", scalar_value=scheduler.get_lr()[0], global_step=epoch)
+                if epoch % t_total == 0:
                     break
-        train_csv_writer.add_record([global_step, losses.val])
-        losses.reset()
-        if global_step % t_total == 0:
+
+        optimizer.zero_grad()
+        if args.local_rank in [-1, 0]:
+            epoch += 1
+            accuracy, normal_attn_losses = valid(args, model, writer, normal_test_loader, epoch)
+            outlier, outlier_attn_losses = valid(args, model, writer, outlier_test_loader, epoch, is_normal=False)
+            auc = roc_auc_score([0]*len(normal_attn_losses) + [1]*len(outlier_attn_losses), normal_attn_losses + outlier_attn_losses)
+            logger.info('auc score: %.5f' % auc)
+            val_csv_writer.add_record([epoch, auc])
+            if best_acc < accuracy:
+                save_model(args, model)
+                best_acc = accuracy
+            model.train()
+            train_csv_writer.add_record([epoch, losses.val])
+            losses.reset()
+        if epoch % t_total == 0:
             break
 
     if args.local_rank in [-1, 0]:
@@ -338,7 +339,7 @@ def main():
                         help="The initial learning rate for SGD.")
     parser.add_argument("--weight_decay", default=0, type=float,
                         help="Weight deay if we apply some.")
-    parser.add_argument("--num_steps", default=10000, type=int,
+    parser.add_argument("--num_steps", default=200, type=int,
                         help="Total number of training epochs to perform.")
     parser.add_argument("--decay_type", choices=["cosine", "linear"], default="cosine",
                         help="How to decay the learning rate.")
@@ -374,8 +375,8 @@ def main():
 
     global train_csv_writer
     global val_csv_writer
-    train_csv_writer = CSV_Writer(path=args.csv_path + args.name + '_train.csv', columns=(['global_step', 'train_loss']))
-    val_csv_writer = CSV_Writer(path=args.csv_path + args.name + '_val.csv', columns=(['global_step', 'auc']))
+    train_csv_writer = CSV_Writer(path=args.csv_path + args.name + '_train.csv', columns=(['epoch', 'train_loss']))
+    val_csv_writer = CSV_Writer(path=args.csv_path + args.name + '_val.csv', columns=(['epoch', 'auc']))
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1:
