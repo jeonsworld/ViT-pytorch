@@ -129,8 +129,8 @@ def valid(args, model, writer, test_loader, epoch, is_normal=True):
 
             attn_loss = att_criterion(attn_weights, noisy_attn)
 
-            att_losses.update(attn_loss)
-            all_attn_loss.append(attn_loss)
+            att_losses.update(attn_loss.item())
+            all_attn_loss.append(attn_loss.item())
             if is_normal:
                 eval_loss = loss_fct(logits, y)
                 eval_losses.update(eval_loss.item())
@@ -235,12 +235,13 @@ def train(args, model):
     model.zero_grad()
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
     losses = AverageMeter()
+    attentions = AverageMeter()
     epoch, best_acc = 0, 0
     att_criterion = torch.nn.MSELoss()
     while True:
         model.train()
         epoch_iterator = tqdm(normal_train_loader,
-                              desc="Training (X / X Steps) (loss=X.X)",
+                              desc="Training (X / X Steps) (loss=X.X) (att_loss=X.X)",
                               bar_format="{l_bar}{r_bar}",
                               dynamic_ncols=True,
                               disable=args.local_rank not in [-1, 0],
@@ -264,9 +265,9 @@ def train(args, model):
                     scaled_loss.backward()
             else:
                 loss.backward()
-
+            losses.update(loss.item() * args.gradient_accumulation_steps)
+            attentions.update(attn_loss.item())
             if (step + 1) % args.gradient_accumulation_steps == 0:
-                losses.update(loss.item()*args.gradient_accumulation_steps)
                 if args.fp16:
                     torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
                 else:
@@ -276,13 +277,11 @@ def train(args, model):
                 optimizer.zero_grad()
 
                 epoch_iterator.set_description(
-                    "Training (%d / %d Steps) (loss=%2.5f)" % (epoch, t_total, losses.val)
+                    "Training (%d / %d Steps) (loss=%2.5f) (att_loss=%2.6f)" % (epoch, t_total, losses.avg, attentions.avg)
                 )
                 if args.local_rank in [-1, 0]:
                     writer.add_scalar("train/loss", scalar_value=losses.val, global_step=epoch)
                     writer.add_scalar("train/lr", scalar_value=scheduler.get_lr()[0], global_step=epoch)
-                if epoch % t_total == 0:
-                    break
 
         optimizer.zero_grad()
         if args.local_rank in [-1, 0]:
@@ -290,14 +289,17 @@ def train(args, model):
             accuracy, normal_attn_losses = valid(args, model, writer, normal_test_loader, epoch)
             outlier, outlier_attn_losses = valid(args, model, writer, outlier_test_loader, epoch, is_normal=False)
             auc = roc_auc_score([0]*len(normal_attn_losses) + [1]*len(outlier_attn_losses), normal_attn_losses + outlier_attn_losses)
-            logger.info('auc score: %.5f' % auc)
-            val_csv_writer.add_record([epoch, auc])
+            normal_np = np.array(normal_attn_losses)
+            outlier_np = np.array(outlier_attn_losses)
+            val_csv_writer.add_record([epoch, auc, normal_np.mean(), outlier_np.mean(), accuracy])
+            logger.info('AUC Score: %.5f' % auc)
             if best_acc < accuracy:
                 save_model(args, model)
                 best_acc = accuracy
             model.train()
-            train_csv_writer.add_record([epoch, losses.val])
+            train_csv_writer.add_record([epoch, losses.avg, attentions.avg])
             losses.reset()
+            attentions.reset()
         if epoch % t_total == 0:
             break
 
@@ -364,7 +366,7 @@ def main():
                              "0 (default value): dynamic loss scaling.\n"
                              "Positive power of 2: static loss scaling value.\n")
 
-    parser.add_argument('--attn_loss_coef', type=float, default=1.0,
+    parser.add_argument('--attn_loss_coef', type=float, default=1e3,
                         help="coefficient of attn_loss when summing two losses")
     parser.add_argument("--fgsm_iter", type=int, default=10,
                         help="number of iterations in fgsm")
@@ -375,8 +377,10 @@ def main():
 
     global train_csv_writer
     global val_csv_writer
-    train_csv_writer = CSV_Writer(path=args.csv_path + args.name + '_train.csv', columns=(['epoch', 'train_loss']))
-    val_csv_writer = CSV_Writer(path=args.csv_path + args.name + '_val.csv', columns=(['epoch', 'auc']))
+    train_csv_writer = CSV_Writer(path=args.csv_path + args.name + '_train.csv',
+                                  columns=(['epoch', 'train_loss', 'train_attention_loss']))
+    val_csv_writer = CSV_Writer(path=args.csv_path + args.name + '_val.csv',
+                                columns=(['epoch', 'auc', 'normal_attention_loss', 'oulier_attention_loss', 'accuracy']))
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1:
