@@ -7,6 +7,7 @@ import os
 import random
 import numpy as np
 import pandas as pd
+from torch.autograd import Variable
 
 from datetime import timedelta
 
@@ -22,7 +23,6 @@ from models.modeling import VisionTransformer, CONFIGS
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.data_utils import get_loader, get_outlier_loader
 from utils.dist_util import get_world_size
-from utils.computational_utils import compute_input_gradient
 from utils.file_utils import CSV_Writer
 
 from sklearn.metrics import roc_auc_score
@@ -116,11 +116,12 @@ def valid(args, model, writer, test_loader, global_step, is_normal=True):
     for step, batch in enumerate(epoch_iterator):
         batch = tuple(t.to(args.device) for t in batch)
         x, y = batch
-        noised_x = fgsm_attack(x, model, eps=args.fgsm_eps, n_iter=args.fgsm_iter, label_loss_coef=args.label_loss_coef)
+        noised_x = pgd_attack(x, model, eps=args.fgsm_eps, n_iter=args.fgsm_iter)
+        model.zero_grad()
+        model.eval()
         with torch.no_grad():
             logits, attn_weights = model(x)
 
-            # noised_x = make_noise(x)
             att_loss = 0
             _, noisy_attn = model(noised_x)
             for attn_layer, noisy_attn_layer in zip(attn_weights, noisy_attn):
@@ -160,35 +161,32 @@ def valid(args, model, writer, test_loader, global_step, is_normal=True):
     return accuracy, all_attn_loss
 
 
-def make_noise(x):
-    epsilon = 8/255
+def make_noise(x, epsilon=0.03):
     delta = torch.zeros_like(x).cuda()
     delta.uniform_(-epsilon, epsilon)
-    return torch.clamp(delta + x, 0, 1)
+    return torch.clamp(delta + x, -1, 1)
 
 
-def attack_loss(x, model, target_out, target_attn, label_loss_coef=1.0):
-    out, attn = model(x)
-    
-    # target_out = torch.argmax(target_out, 1)
-    # target_attn = torch.stack(target_attn, dim=1)
-    attn = torch.stack(attn, dim=1)
-
-    loss = label_loss_coef * torch.nn.functional.cross_entropy(out, target_out) + torch.nn.functional.mse_loss(attn, target_attn)
-    return loss
-
-
-def fgsm_attack(x, model, target_out=None, eps=0.03, n_iter=10, label_loss_coef=1.0):
-    new_x = x.detach().clone()
-    out, target_attn = model(x)
-    if target_out is None:
-        target_out = torch.argmax(out, 1).data
+def pgd_attack(x, model, eps=0.03, n_iter=10):
+    model.eval()
+    adv_x = x.detach().clone()
+    adv_x = make_noise(adv_x, eps)
+    _, target_attn = model(x)
     target_attn = torch.stack(target_attn, dim=1).data
     for i in range(n_iter):
         model.zero_grad()
-        grad = compute_input_gradient(attack_loss, new_x, model=model, target_out=target_out, target_attn=target_attn, label_loss_coef=label_loss_coef)
-        new_x = torch.clamp(new_x + (2.5/n_iter) * eps * grad.sign(), 0, 1)
-    return new_x
+
+        adv_x.requires_grad = True
+        out, attn = model(adv_x)
+        attn = torch.stack(attn, dim=1)
+        loss = torch.nn.functional.mse_loss(attn, target_attn)
+        loss.backward()
+        adv_x.requires_grad = False
+
+        adv_x = adv_x + (2.5/n_iter) * eps * adv_x.grad.sign()
+        eta = torch.clamp(adv_x - x, -eps, eps)
+        adv_x = torch.clamp(x + eta, -1, 1)
+    return adv_x
 
 
 def train(args, model):
@@ -250,10 +248,10 @@ def train(args, model):
             x, y = batch
             loss, attn_weights = model(x, y)
 
-            # noised_x = make_noise(x)
-            noised_x = fgsm_attack(x, model, target_out=y, eps=args.fgsm_eps, n_iter=args.fgsm_iter, label_loss_coef=args.label_loss_coef)
-
+            noised_x = pgd_attack(x, model, eps=args.fgsm_eps, n_iter=args.fgsm_iter)
+            model.train()
             _, noisy_attn = model(noised_x, y)
+            #todo change for to stack
             for attn_layer, noisy_attn_layer in zip(attn_weights, noisy_attn):
                 loss += att_criterion(attn_layer, noisy_attn_layer)
 
