@@ -110,7 +110,8 @@ def valid(args, model, writer, test_loader, global_step, is_normal=True):
                           desc="Validating... (loss=X.X) (att_loss=X.X)",
                           bar_format="{l_bar}{r_bar}",
                           dynamic_ncols=True,
-                          disable=args.local_rank not in [-1, 0])
+                          disable=args.local_rank not in [-1, 0],
+                          position=0, leave=True)
     loss_fct = torch.nn.CrossEntropyLoss()
     att_criterion = torch.nn.MSELoss()
     for step, batch in enumerate(epoch_iterator):
@@ -121,14 +122,15 @@ def valid(args, model, writer, test_loader, global_step, is_normal=True):
         model.eval()
         with torch.no_grad():
             logits, attn_weights = model(x)
+            attn_weights = torch.stack(attn_weights, dim=1)
 
-            att_loss = 0
             _, noisy_attn = model(noised_x)
-            for attn_layer, noisy_attn_layer in zip(attn_weights, noisy_attn):
-                att_loss += att_criterion(attn_layer, noisy_attn_layer).item()
+            noisy_attn = torch.stack(noisy_attn, dim=1)
 
-            att_losses.update(att_loss)
-            all_attn_loss.append(att_loss)
+            attn_loss = att_criterion(attn_weights, noisy_attn)
+
+            att_losses.update(attn_loss)
+            all_attn_loss.append(attn_loss)
             if is_normal:
                 eval_loss = loss_fct(logits, y)
                 eval_losses.update(eval_loss.item())
@@ -247,14 +249,13 @@ def train(args, model):
             batch = tuple(t.to(args.device) for t in batch)
             x, y = batch
             loss, attn_weights = model(x, y)
-
+            attn_weights = torch.stack(attn_weights, dim=1)
             noised_x = pgd_attack(x, model, eps=args.fgsm_eps, n_iter=args.fgsm_iter)
             model.train()
             _, noisy_attn = model(noised_x, y)
-            #todo change for to stack
-            for attn_layer, noisy_attn_layer in zip(attn_weights, noisy_attn):
-                loss += att_criterion(attn_layer, noisy_attn_layer)
-
+            noisy_attn = torch.stack(noisy_attn, dim=1)
+            attn_loss = att_criterion(attn_weights, noisy_attn)
+            loss += args.attn_loss_coef * attn_loss
 
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
@@ -362,12 +363,13 @@ def main():
                              "0 (default value): dynamic loss scaling.\n"
                              "Positive power of 2: static loss scaling value.\n")
 
-    parser.add_argument('--label_loss_coef', type=float, default=1.0,
-                        help="coefficient of ce_loss for labels")
+    parser.add_argument('--attn_loss_coef', type=float, default=1.0,
+                        help="coefficient of attn_loss when summing two losses")
     parser.add_argument("--fgsm_iter", type=int, default=10,
                         help="number of iterations in fgsm")
     parser.add_argument("--fgsm_eps", type=float, default=0.03,
                         help="epsilon in fgsm")
+
     args = parser.parse_args()
 
     global train_csv_writer
