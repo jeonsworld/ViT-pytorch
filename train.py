@@ -147,7 +147,7 @@ def valid(args, model, writer, test_loader, epoch, is_normal=True):
             all_label[0] = np.append(
                 all_label[0], y.detach().cpu().numpy(), axis=0
             )
-        epoch_iterator.set_description("Validating... (loss=%2.5f) (att_loss=%2.6f)" % (eval_losses.val, att_losses.val))
+        epoch_iterator.set_description("Validating... (loss=%2.5f) (att_loss=%2.6f)" % (eval_losses.avg, att_losses.avg))
 
     all_preds, all_label = all_preds[0], all_label[0]
     accuracy = simple_accuracy(all_preds, all_label)
@@ -160,7 +160,10 @@ def valid(args, model, writer, test_loader, epoch, is_normal=True):
     logger.info("Valid Accuracy: %2.5f" % accuracy)
 
     writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=epoch)
-    return accuracy, all_attn_loss
+    if is_normal:
+        return accuracy, all_attn_loss, eval_losses.avg
+    else:
+        return accuracy, all_attn_loss
 
 
 def make_noise(x, epsilon=0.03):
@@ -286,12 +289,13 @@ def train(args, model):
         optimizer.zero_grad()
         if args.local_rank in [-1, 0]:
             epoch += 1
-            accuracy, normal_attn_losses = valid(args, model, writer, normal_test_loader, epoch)
+            accuracy, normal_attn_losses, normal_eval_loss = valid(args, model, writer, normal_test_loader, epoch)
             outlier, outlier_attn_losses = valid(args, model, writer, outlier_test_loader, epoch, is_normal=False)
             auc = roc_auc_score([0]*len(normal_attn_losses) + [1]*len(outlier_attn_losses), normal_attn_losses + outlier_attn_losses)
             normal_np = np.array(normal_attn_losses)
             outlier_np = np.array(outlier_attn_losses)
-            val_csv_writer.add_record([epoch, auc, normal_np.mean(), outlier_np.mean(), accuracy])
+            val_csv_writer.add_record([epoch, auc, normal_np.mean(), outlier_np.mean(),
+                                       normal_eval_loss + args.attn_loss_coef * normal_np.mean(), accuracy])
             logger.info('AUC Score: %.5f' % auc)
             if best_acc < accuracy:
                 save_model(args, model)
@@ -380,7 +384,8 @@ def main():
     train_csv_writer = CSV_Writer(path=args.csv_path + args.name + '_train.csv',
                                   columns=(['epoch', 'train_loss', 'train_attention_loss']))
     val_csv_writer = CSV_Writer(path=args.csv_path + args.name + '_val.csv',
-                                columns=(['epoch', 'auc', 'normal_attention_loss', 'oulier_attention_loss', 'accuracy']))
+                                columns=(['epoch', 'auc', 'normal_attention_loss',
+                                          'oulier_attention_loss', 'normal_loss', 'accuracy']))
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1:
