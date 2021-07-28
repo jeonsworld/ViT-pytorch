@@ -372,17 +372,12 @@ def main():
 
     parser.add_argument('--attn_loss_coef', type=float, default=1e3,
                         help="coefficient of attn_loss when summing two losses")
-<<<<<<< HEAD
+
     parser.add_argument("--pgd_iter", type=int, default=10,
                         help="number of iterations in pgd")
     parser.add_argument("--pgd_eps", type=float, default=0.03,
                         help="epsilon in pgd")
-=======
-    parser.add_argument("--fgsm_iter", type=int, default=10,
-                        help="number of iterations in fgsm")
-    parser.add_argument("--fgsm_eps", type=float, default=0.03,
-                        help="epsilon in fgsm")
->>>>>>> 9f90783832b13aacee66ca8b7bb9355f19035ee4
+
 
     args = parser.parse_args()
 
