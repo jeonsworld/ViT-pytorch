@@ -7,6 +7,7 @@ import os
 import random
 import numpy as np
 import pandas as pd
+from torch.autograd import Variable
 
 from datetime import timedelta
 
@@ -22,7 +23,6 @@ from models.modeling import VisionTransformer, CONFIGS
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.data_utils import get_loader, get_outlier_loader
 from utils.dist_util import get_world_size
-from utils.computational_utils import compute_input_gradient
 from utils.file_utils import CSV_Writer
 
 from sklearn.metrics import roc_auc_score
@@ -94,7 +94,7 @@ def set_seed(args):
         torch.cuda.manual_seed_all(args.seed)
 
 
-def valid(args, model, writer, test_loader, global_step, is_normal=True):
+def valid(args, model, writer, test_loader, epoch, is_normal=True):
     # Validation!
     eval_losses = AverageMeter()
     att_losses = AverageMeter()
@@ -110,24 +110,27 @@ def valid(args, model, writer, test_loader, global_step, is_normal=True):
                           desc="Validating... (loss=X.X) (att_loss=X.X)",
                           bar_format="{l_bar}{r_bar}",
                           dynamic_ncols=True,
-                          disable=args.local_rank not in [-1, 0])
+                          disable=args.local_rank not in [-1, 0],
+                          position=0, leave=True)
     loss_fct = torch.nn.CrossEntropyLoss()
     att_criterion = torch.nn.MSELoss()
     for step, batch in enumerate(epoch_iterator):
         batch = tuple(t.to(args.device) for t in batch)
         x, y = batch
-        noised_x = fgsm_attack(x, model, eps=args.fgsm_eps, n_iter=args.fgsm_iter, label_loss_coef=args.label_loss_coef)
+        noised_x = pgd_attack(x, model, eps=args.fgsm_eps, n_iter=args.fgsm_iter)
+        model.zero_grad()
+        model.eval()
         with torch.no_grad():
             logits, attn_weights = model(x)
+            attn_weights = torch.stack(attn_weights, dim=1)
 
-            # noised_x = make_noise(x)
-            att_loss = 0
             _, noisy_attn = model(noised_x)
-            for attn_layer, noisy_attn_layer in zip(attn_weights, noisy_attn):
-                att_loss += att_criterion(attn_layer, noisy_attn_layer).item()
+            noisy_attn = torch.stack(noisy_attn, dim=1)
 
-            att_losses.update(att_loss)
-            all_attn_loss.append(att_loss)
+            attn_loss = att_criterion(attn_weights, noisy_attn)
+
+            att_losses.update(attn_loss.item())
+            all_attn_loss.append(attn_loss.item())
             if is_normal:
                 eval_loss = loss_fct(logits, y)
                 eval_losses.update(eval_loss.item())
@@ -144,51 +147,51 @@ def valid(args, model, writer, test_loader, global_step, is_normal=True):
             all_label[0] = np.append(
                 all_label[0], y.detach().cpu().numpy(), axis=0
             )
-        epoch_iterator.set_description("Validating... (loss=%2.5f) (att_loss=%2.6f)" % (eval_losses.val, att_losses.val))
+        epoch_iterator.set_description("Validating... (loss=%2.5f) (att_loss=%2.6f)" % (eval_losses.avg, att_losses.avg))
 
     all_preds, all_label = all_preds[0], all_label[0]
     accuracy = simple_accuracy(all_preds, all_label)
 
     logger.info("\n")
     logger.info("Validation Results")
-    logger.info("Global Steps: %d" % global_step)
+    logger.info("Epoch: %d" % epoch)
     logger.info("Valid Loss: %2.5f" % eval_losses.avg)
     logger.info("Attention Loss: %2.6f" % att_losses.avg)
     logger.info("Valid Accuracy: %2.5f" % accuracy)
 
-    writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=global_step)
-    return accuracy, all_attn_loss
+    writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=epoch)
+    if is_normal:
+        return accuracy, all_attn_loss, eval_losses.avg
+    else:
+        return accuracy, all_attn_loss
 
 
-def make_noise(x):
-    epsilon = 8/255
+def make_noise(x, epsilon=0.03):
     delta = torch.zeros_like(x).cuda()
     delta.uniform_(-epsilon, epsilon)
-    return torch.clamp(delta + x, 0, 1)
+    return torch.clamp(delta + x, -1, 1)
 
 
-def attack_loss(x, model, target_out, target_attn, label_loss_coef=1.0):
-    out, attn = model(x)
-    
-    # target_out = torch.argmax(target_out, 1)
-    # target_attn = torch.stack(target_attn, dim=1)
-    attn = torch.stack(attn, dim=1)
-
-    loss = label_loss_coef * torch.nn.functional.cross_entropy(out, target_out) + torch.nn.functional.mse_loss(attn, target_attn)
-    return loss
-
-
-def fgsm_attack(x, model, target_out=None, eps=0.03, n_iter=10, label_loss_coef=1.0):
-    new_x = x.detach().clone()
-    out, target_attn = model(x)
-    if target_out is None:
-        target_out = torch.argmax(out, 1).data
+def pgd_attack(x, model, eps=0.03, n_iter=10):
+    model.eval()
+    adv_x = x.detach().clone()
+    adv_x = make_noise(adv_x, eps)
+    _, target_attn = model(x)
     target_attn = torch.stack(target_attn, dim=1).data
     for i in range(n_iter):
         model.zero_grad()
-        grad = compute_input_gradient(attack_loss, new_x, model=model, target_out=target_out, target_attn=target_attn, label_loss_coef=label_loss_coef)
-        new_x = torch.clamp(new_x + (2.5/n_iter) * eps * grad.sign(), 0, 1)
-    return new_x
+
+        adv_x.requires_grad = True
+        out, attn = model(adv_x)
+        attn = torch.stack(attn, dim=1)
+        loss = torch.nn.functional.mse_loss(attn, target_attn)
+        loss.backward()
+        adv_x.requires_grad = False
+
+        adv_x = adv_x + (2.5/n_iter) * eps * adv_x.grad.sign()
+        eta = torch.clamp(adv_x - x, -eps, eps)
+        adv_x = torch.clamp(x + eta, -1, 1)
+    return adv_x
 
 
 def train(args, model):
@@ -200,7 +203,6 @@ def train(args, model):
     args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
 
     # Prepare dataset
-    # train_loader, test_loader = get_loader(args)
     normal_train_loader, normal_test_loader, outlier_train_loader, outlier_test_loader = get_outlier_loader(args)
 
     # Prepare optimizer and scheduler
@@ -236,27 +238,28 @@ def train(args, model):
     model.zero_grad()
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
     losses = AverageMeter()
-    global_step, best_acc = 0, 0
+    attentions = AverageMeter()
+    epoch, best_acc = 0, 0
     att_criterion = torch.nn.MSELoss()
     while True:
         model.train()
         epoch_iterator = tqdm(normal_train_loader,
-                              desc="Training (X / X Steps) (loss=X.X)",
+                              desc="Training (X / X Steps) (loss=X.X) (att_loss=X.X)",
                               bar_format="{l_bar}{r_bar}",
                               dynamic_ncols=True,
-                              disable=args.local_rank not in [-1, 0])
+                              disable=args.local_rank not in [-1, 0],
+                              position=0, leave=True)
         for step, batch in enumerate(epoch_iterator):
             batch = tuple(t.to(args.device) for t in batch)
             x, y = batch
             loss, attn_weights = model(x, y)
-
-            # noised_x = make_noise(x)
-            noised_x = fgsm_attack(x, model, target_out=y, eps=args.fgsm_eps, n_iter=args.fgsm_iter, label_loss_coef=args.label_loss_coef)
-
+            attn_weights = torch.stack(attn_weights, dim=1)
+            noised_x = pgd_attack(x, model, eps=args.fgsm_eps, n_iter=args.fgsm_iter)
+            model.train()
             _, noisy_attn = model(noised_x, y)
-            for attn_layer, noisy_attn_layer in zip(attn_weights, noisy_attn):
-                loss += att_criterion(attn_layer, noisy_attn_layer)
-
+            noisy_attn = torch.stack(noisy_attn, dim=1)
+            attn_loss = att_criterion(attn_weights, noisy_attn)
+            loss += args.attn_loss_coef * attn_loss
 
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
@@ -265,9 +268,9 @@ def train(args, model):
                     scaled_loss.backward()
             else:
                 loss.backward()
-
+            losses.update(loss.item() * args.gradient_accumulation_steps)
+            attentions.update(attn_loss.item())
             if (step + 1) % args.gradient_accumulation_steps == 0:
-                losses.update(loss.item()*args.gradient_accumulation_steps)
                 if args.fp16:
                     torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
                 else:
@@ -275,30 +278,33 @@ def train(args, model):
                 scheduler.step()
                 optimizer.step()
                 optimizer.zero_grad()
-                global_step += 1
 
                 epoch_iterator.set_description(
-                    "Training (%d / %d Steps) (loss=%2.5f)" % (global_step, t_total, losses.val)
+                    "Training (%d / %d Steps) (loss=%2.5f) (att_loss=%2.6f)" % (epoch, t_total, losses.avg, attentions.avg)
                 )
                 if args.local_rank in [-1, 0]:
-                    writer.add_scalar("train/loss", scalar_value=losses.val, global_step=global_step)
-                    writer.add_scalar("train/lr", scalar_value=scheduler.get_lr()[0], global_step=global_step)
-                if global_step % args.eval_every == 0 and args.local_rank in [-1, 0]:
-                    accuracy, normal_attn_losses = valid(args, model, writer, normal_test_loader, global_step)
-                    outlier, outlier_attn_losses = valid(args, model, writer, outlier_test_loader, global_step, is_normal=False)
-                    auc = roc_auc_score([0]*len(normal_attn_losses) + [1]*len(outlier_attn_losses), normal_attn_losses + outlier_attn_losses)
-                    logger.info('auc score: %.5f' % auc)
-                    val_csv_writer.add_record([global_step, auc])
-                    if best_acc < accuracy:
-                        save_model(args, model)
-                        best_acc = accuracy
-                    model.train()
+                    writer.add_scalar("train/loss", scalar_value=losses.val, global_step=epoch)
+                    writer.add_scalar("train/lr", scalar_value=scheduler.get_lr()[0], global_step=epoch)
 
-                if global_step % t_total == 0:
-                    break
-        train_csv_writer.add_record([global_step, losses.val])
-        losses.reset()
-        if global_step % t_total == 0:
+        optimizer.zero_grad()
+        if args.local_rank in [-1, 0]:
+            epoch += 1
+            accuracy, normal_attn_losses, normal_eval_loss = valid(args, model, writer, normal_test_loader, epoch)
+            outlier, outlier_attn_losses = valid(args, model, writer, outlier_test_loader, epoch, is_normal=False)
+            auc = roc_auc_score([0]*len(normal_attn_losses) + [1]*len(outlier_attn_losses), normal_attn_losses + outlier_attn_losses)
+            normal_np = np.array(normal_attn_losses)
+            outlier_np = np.array(outlier_attn_losses)
+            val_csv_writer.add_record([epoch, auc, normal_np.mean(), outlier_np.mean(),
+                                       normal_eval_loss + args.attn_loss_coef * normal_np.mean(), accuracy])
+            logger.info('AUC Score: %.5f' % auc)
+            if best_acc < accuracy:
+                save_model(args, model)
+                best_acc = accuracy
+            model.train()
+            train_csv_writer.add_record([epoch, losses.avg, attentions.avg])
+            losses.reset()
+            attentions.reset()
+        if epoch % t_total == 0:
             break
 
     if args.local_rank in [-1, 0]:
@@ -339,7 +345,7 @@ def main():
                         help="The initial learning rate for SGD.")
     parser.add_argument("--weight_decay", default=0, type=float,
                         help="Weight deay if we apply some.")
-    parser.add_argument("--num_steps", default=10000, type=int,
+    parser.add_argument("--num_steps", default=200, type=int,
                         help="Total number of training epochs to perform.")
     parser.add_argument("--decay_type", choices=["cosine", "linear"], default="cosine",
                         help="How to decay the learning rate.")
@@ -364,18 +370,22 @@ def main():
                              "0 (default value): dynamic loss scaling.\n"
                              "Positive power of 2: static loss scaling value.\n")
 
-    parser.add_argument('--label_loss_coef', type=float, default=1.0,
-                        help="coefficient of ce_loss for labels")
-    parser.add_argument("--fgsm_iter", type=int, default=10,
+    parser.add_argument('--attn_loss_coef', type=float, default=1e3,
+                        help="coefficient of attn_loss when summing two losses")
+    parser.add_argument("--pgd_iter", type=int, default=10,
                         help="number of iterations in fgsm")
-    parser.add_argument("--fgsm_eps", type=float, default=0.03,
+    parser.add_argument("--pgd_eps", type=float, default=0.03,
                         help="epsilon in fgsm")
+
     args = parser.parse_args()
 
     global train_csv_writer
     global val_csv_writer
-    train_csv_writer = CSV_Writer(path=args.csv_path + args.name + '_train.csv', columns=(['global_step', 'train_loss']))
-    val_csv_writer = CSV_Writer(path=args.csv_path + args.name + '_val.csv', columns=(['global_step', 'auc']))
+    train_csv_writer = CSV_Writer(path=args.csv_path + args.name + '_train.csv',
+                                  columns=(['epoch', 'train_loss', 'train_attention_loss']))
+    val_csv_writer = CSV_Writer(path=args.csv_path + args.name + '_val.csv',
+                                columns=(['epoch', 'auc', 'normal_attention_loss',
+                                          'oulier_attention_loss', 'normal_loss', 'accuracy']))
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1:
