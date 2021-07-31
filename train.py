@@ -254,7 +254,7 @@ def train(args, model):
             x, y = batch
             loss, attn_weights = model(x, y)
             attn_weights = torch.stack(attn_weights, dim=1)
-            noised_x = pgd_attack(x, model, eps=args.fgsm_eps, n_iter=args.fgsm_iter)
+            noised_x = pgd_attack(x, model, eps=args.pgd_eps, n_iter=args.pgd_iter)
             model.train()
             _, noisy_attn = model(noised_x, y)
             noisy_attn = torch.stack(noisy_attn, dim=1)
@@ -389,7 +389,7 @@ def main():
                                 columns=(['epoch', 'auc', 'normal_attention_loss',
                                           'oulier_attention_loss', 'normal_loss', 'accuracy']))
 
-    # Setup CUDA, GPU & distributed training
+    # Setup CUDA, GPU & distributed training 
     if args.local_rank == -1:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         args.n_gpu = torch.cuda.device_count()
