@@ -18,6 +18,7 @@ from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 # from apex import amp
 # from apex.parallel import DistributedDataParallel as DDP
+from torchvision import transforms
 
 from models.modeling import VisionTransformer, CONFIGS
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
@@ -26,6 +27,8 @@ from utils.dist_util import get_world_size
 from utils.file_utils import CSV_Writer
 
 from sklearn.metrics import roc_auc_score
+from PIL import Image
+import os
 
 logger = logging.getLogger(__name__)
 train_csv_writer = None
@@ -34,6 +37,7 @@ val_csv_writer = None
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
+
     def __init__(self):
         self.reset()
 
@@ -59,6 +63,7 @@ def save_model(args, model):
     model_checkpoint = os.path.join(args.output_dir, "%s_checkpoint.bin" % args.name)
     torch.save(model_to_save.state_dict(), model_checkpoint)
     logger.info("Saved model checkpoint to [DIR: %s]", args.output_dir)
+
 
 """"
 function for show image and adversarial image--> we hava an error in assignment to model!
@@ -94,7 +99,7 @@ def get_attention_map(img, get_mask=False):
     else:        
         mask = cv2.resize(mask / mask.max(), img.size)[..., np.newaxis]
         result = (mask * img).astype("uint8")
-    
+
     return result
 
 def plot_attention_map(original_img, att_map):
@@ -103,7 +108,8 @@ def plot_attention_map(original_img, att_map):
     ax2.set_title('Attention Map Last Layer')
     _ = ax1.imshow(original_img)
     _ = ax2.imshow(att_map)
-""""
+"""
+
 
 def setup(args):
     # Prepare model
@@ -113,7 +119,7 @@ def setup(args):
     num_classes = 5
 
     model = VisionTransformer(config, args.img_size, zero_head=True, num_classes=num_classes, vis=True)
-    if args.pretrained_dir: # if false train from scratch
+    if args.pretrained_dir:  # if false train from scratch
         model.load_from(np.load(args.pretrained_dir))
     model.to(args.device)
     num_params = count_parameters(model)
@@ -127,7 +133,7 @@ def setup(args):
 
 def count_parameters(model):
     params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    return params/1000000
+    return params / 1000000
 
 
 def set_seed(args):
@@ -136,6 +142,31 @@ def set_seed(args):
     torch.manual_seed(args.seed)
     if args.n_gpu > 0:
         torch.cuda.manual_seed_all(args.seed)
+
+
+def image_grid(imgs, rows, cols):
+    assert len(imgs) == rows * cols
+
+    w, h = imgs[0].size
+    grid = Image.new('RGB', size=(cols * w, rows * h))
+    grid_w, grid_h = grid.size
+
+    for i, img in enumerate(imgs):
+        grid.paste(img, box=(i % cols * w, i // cols * h))
+    return grid
+
+
+def visualize(x, noised_x, epoch):
+    if not os.path.exists("Pics"):
+        os.makedirs("Pics")
+    if not os.path.exists(f"Pics/{epoch}"):
+        os.makedirs(f"Pics/{epoch}")
+    for (step, (im, noised_im)) in enumerate(zip(x, noised_x)):
+        im.mul_(0.5).add_(0.5)
+        noised_im.mul_(0.5).add_(0.5)
+        im = transforms.ToPILImage()(im).convert("RGB")
+        noised_im = transforms.ToPILImage()(noised_im).convert("RGB")
+        image_grid([im, noised_im], 1, 2).save(f'Pics/{epoch}/im_{step}.jpg')
 
 
 def valid(args, model, writer, test_loader, epoch, is_normal=True):
@@ -161,9 +192,11 @@ def valid(args, model, writer, test_loader, epoch, is_normal=True):
     for step, batch in enumerate(epoch_iterator):
         batch = tuple(t.to(args.device) for t in batch)
         x, y = batch
-        noised_x = pgd_attack(x, model, eps=args.fgsm_eps, n_iter=args.fgsm_iter)
+        noised_x = pgd_attack(x, model, eps=args.pgd_eps, n_iter=args.pgd_iter)
         model.zero_grad()
         model.eval()
+        if step == 0:
+            visualize(x, noised_x, epoch)
         with torch.no_grad():
             logits, attn_weights = model(x)
             attn_weights = torch.stack(attn_weights, dim=1)
@@ -191,7 +224,8 @@ def valid(args, model, writer, test_loader, epoch, is_normal=True):
             all_label[0] = np.append(
                 all_label[0], y.detach().cpu().numpy(), axis=0
             )
-        epoch_iterator.set_description("Validating... (loss=%2.5f) (att_loss=%2.6f)" % (eval_losses.avg, att_losses.avg))
+        epoch_iterator.set_description(
+            "Validating... (loss=%2.5f) (att_loss=%2.6f)" % (eval_losses.avg, att_losses.avg))
 
     all_preds, all_label = all_preds[0], all_label[0]
     accuracy = simple_accuracy(all_preds, all_label)
@@ -232,7 +266,7 @@ def pgd_attack(x, model, eps=0.03, n_iter=10):
         loss.backward()
         adv_x.requires_grad = False
 
-        adv_x = adv_x + (2.5/n_iter) * eps * adv_x.grad.sign()
+        adv_x = adv_x + (2.5 / n_iter) * eps * adv_x.grad.sign()
         eta = torch.clamp(adv_x - x, -eps, eps)
         adv_x = torch.clamp(x + eta, -1, 1)
     return adv_x
@@ -264,7 +298,7 @@ def train(args, model):
         model, optimizer = amp.initialize(models=model,
                                           optimizers=optimizer,
                                           opt_level=args.fp16_opt_level)
-        amp._amp_state.loss_scalers[0]._loss_scale = 2**20
+        amp._amp_state.loss_scalers[0]._loss_scale = 2 ** 20
 
     # Distributed training
     if args.local_rank != -1:
@@ -324,7 +358,8 @@ def train(args, model):
                 optimizer.zero_grad()
 
                 epoch_iterator.set_description(
-                    "Training (%d / %d Steps) (loss=%2.5f) (att_loss=%2.6f)" % (epoch, t_total, losses.avg, attentions.avg)
+                    "Training (%d / %d Steps) (loss=%2.5f) (att_loss=%2.6f)" % (
+                    epoch, t_total, losses.avg, attentions.avg)
                 )
                 if args.local_rank in [-1, 0]:
                     writer.add_scalar("train/loss", scalar_value=losses.val, global_step=epoch)
@@ -335,7 +370,8 @@ def train(args, model):
             epoch += 1
             accuracy, normal_attn_losses, normal_eval_loss = valid(args, model, writer, normal_test_loader, epoch)
             outlier, outlier_attn_losses = valid(args, model, writer, outlier_test_loader, epoch, is_normal=False)
-            auc = roc_auc_score([0]*len(normal_attn_losses) + [1]*len(outlier_attn_losses), normal_attn_losses + outlier_attn_losses)
+            auc = roc_auc_score([0] * len(normal_attn_losses) + [1] * len(outlier_attn_losses),
+                                normal_attn_losses + outlier_attn_losses)
             normal_np = np.array(normal_attn_losses)
             outlier_np = np.array(outlier_attn_losses)
             val_csv_writer.add_record([epoch, auc, normal_np.mean(), outlier_np.mean(),
@@ -370,7 +406,7 @@ def main():
                                                  "ViT-L_32", "ViT-H_14", "R50-ViT-B_16"],
                         default="ViT-B_16",
                         help="Which variant to use.")
-    parser.add_argument("--pretrained_dir", type=str, # default="checkpoint/ViT-B_16.npz",
+    parser.add_argument("--pretrained_dir", type=str,  # default="checkpoint/ViT-B_16.npz",
                         help="Where to search for pretrained ViT models.")
     parser.add_argument("--output_dir", default="output", type=str,
                         help="The output directory where checkpoints will be written.")
@@ -421,7 +457,6 @@ def main():
                         help="number of iterations in pgd")
     parser.add_argument("--pgd_eps", type=float, default=0.03,
                         help="epsilon in pgd")
-
 
     args = parser.parse_args()
 
