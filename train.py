@@ -196,7 +196,7 @@ def valid(args, model, writer, test_loader, epoch, is_normal=True):
         model.zero_grad()
         model.eval()
         if step == 0:
-            visualize(x, noised_x, epoch)
+            visualize(x.clone(), noised_x.clone(), epoch)
         with torch.no_grad():
             logits, attn_weights = model(x)
             attn_weights = torch.stack(attn_weights, dim=1)
