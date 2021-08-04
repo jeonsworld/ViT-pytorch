@@ -156,17 +156,17 @@ def image_grid(imgs, rows, cols):
     return grid
 
 
-def visualize(x, noised_x, epoch):
+def visualize(x, noised_x, epoch, is_normal):
     if not os.path.exists("Pics"):
         os.makedirs("Pics")
-    if not os.path.exists(f"Pics/{epoch}"):
-        os.makedirs(f"Pics/{epoch}")
+    if not os.path.exists(f"Pics/{epoch}_{is_normal}"):
+        os.makedirs(f"Pics/{epoch}_{is_normal}")
     for (step, (im, noised_im)) in enumerate(zip(x, noised_x)):
         im.mul_(0.5).add_(0.5)
         noised_im.mul_(0.5).add_(0.5)
         im = transforms.ToPILImage()(im).convert("RGB")
         noised_im = transforms.ToPILImage()(noised_im).convert("RGB")
-        image_grid([im, noised_im], 1, 2).save(f'Pics/{epoch}/im_{step}.jpg')
+        image_grid([im, noised_im], 1, 2).save(f'Pics/{epoch}_{is_normal}/im_{step}.jpg')
 
 
 def valid(args, model, writer, test_loader, epoch, is_normal=True):
@@ -196,7 +196,7 @@ def valid(args, model, writer, test_loader, epoch, is_normal=True):
         model.zero_grad()
         model.eval()
         if step == 0:
-            visualize(x.clone(), noised_x.clone(), epoch)
+            visualize(x.clone(), noised_x.clone(), epoch, is_normal)
         with torch.no_grad():
             logits, attn_weights = model(x)
             attn_weights = torch.stack(attn_weights, dim=1)
