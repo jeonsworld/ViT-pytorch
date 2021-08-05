@@ -162,6 +162,7 @@ def visualize(x, noised_x, epoch, is_normal):
     if not os.path.exists(f"Pics/{epoch}_{is_normal}"):
         os.makedirs(f"Pics/{epoch}_{is_normal}")
     for (step, (im, noised_im)) in enumerate(zip(x, noised_x)):
+        noised_im = im - noised_im
         im.mul_(0.5).add_(0.5)
         noised_im.mul_(0.5).add_(0.5)
         im = transforms.ToPILImage()(im).convert("RGB")
