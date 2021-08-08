@@ -1,14 +1,14 @@
 from torch.utils.data import Dataset
 
 
-class OutlierDataset(Dataset):
+class NormalDataset(Dataset):
 
     def __init__(self, main_dataset, transform):
         self.dataset = main_dataset.dataset
         indices = main_dataset.indices
         final_indices = []
         for i in indices:
-            if main_dataset.dataset.targets[i] >= 5:
+            if main_dataset.dataset.targets[i] < 5:
                 final_indices.append(i)
         self.indices = final_indices
         self.transform = transform

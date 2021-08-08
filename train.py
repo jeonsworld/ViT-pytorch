@@ -65,9 +65,6 @@ def save_model(args, model):
     logger.info("Saved model checkpoint to [DIR: %s]", args.output_dir)
 
 
-
-
-
 def setup(args):
     # Prepare model
     config = CONFIGS[args.model_type]
@@ -119,7 +116,7 @@ def visualize(x, noised_x, epoch, is_normal):
     if not os.path.exists(f"Pics/{epoch}_{is_normal}"):
         os.makedirs(f"Pics/{epoch}_{is_normal}")
     for (step, (im, noised_im)) in enumerate(zip(x, noised_x)):
-        noised_im = im - noised_im
+        noised_im = 10 * (im - noised_im)
         im.mul_(0.5).add_(0.5)
         noised_im.mul_(0.5).add_(0.5)
         im = transforms.ToPILImage()(im).convert("RGB")
@@ -239,7 +236,8 @@ def train(args, model):
     args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
 
     # Prepare dataset
-    normal_train_loader, normal_test_loader, outlier_train_loader, outlier_test_loader = get_outlier_loader(args)
+    normal_train_loader, normal_val_loader, normal_test_loader, \
+    outlier_train_loader, outlier_val_loader, outlier_test_loader = get_outlier_loader(args)
 
     # Prepare optimizer and scheduler
     optimizer = torch.optim.SGD(model.parameters(),
@@ -326,8 +324,8 @@ def train(args, model):
         optimizer.zero_grad()
         if args.local_rank in [-1, 0]:
             epoch += 1
-            accuracy, normal_attn_losses, normal_eval_loss = valid(args, model, writer, normal_test_loader, epoch)
-            outlier, outlier_attn_losses = valid(args, model, writer, outlier_test_loader, epoch, is_normal=False)
+            accuracy, normal_attn_losses, normal_eval_loss = valid(args, model, writer, normal_val_loader, epoch)
+            outlier, outlier_attn_losses = valid(args, model, writer, outlier_val_loader, epoch, is_normal=False)
             auc = roc_auc_score([0] * len(normal_attn_losses) + [1] * len(outlier_attn_losses),
                                 normal_attn_losses + outlier_attn_losses)
             normal_np = np.array(normal_attn_losses)
