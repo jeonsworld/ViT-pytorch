@@ -22,7 +22,7 @@ from torchvision import transforms
 
 from models.modeling import VisionTransformer, CONFIGS
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
-from utils.data_utils import get_loader, get_outlier_loader
+from utils.data_utils import get_outlier_loader
 from utils.dist_util import get_world_size
 from utils.file_utils import CSV_Writer
 
