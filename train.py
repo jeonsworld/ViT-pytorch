@@ -110,18 +110,18 @@ def image_grid(imgs, rows, cols):
     return grid
 
 
-def visualize(x, noised_x, epoch, is_normal):
-    if not os.path.exists("Pics"):
-        os.makedirs("Pics")
-    if not os.path.exists(f"Pics/{epoch}_{is_normal}"):
-        os.makedirs(f"Pics/{epoch}_{is_normal}")
+def visualize(x, noised_x, epoch, is_normal, des_name="Pics"):
+    if not os.path.exists(f"{des_name}"):
+        os.makedirs(f"{des_name}")
+    if not os.path.exists(f"{des_name}/{epoch}_{is_normal}"):
+        os.makedirs(f"{des_name}/{epoch}_{is_normal}")
     for (step, (im, noised_im)) in enumerate(zip(x, noised_x)):
-        noised_im = 10 * (im - noised_im)
-        im.mul_(0.5).add_(0.5)
+        diff_im = 10 * (im - noised_im)
+        diff_im.mul_(0.5).add_(0.5)
         noised_im.mul_(0.5).add_(0.5)
-        im = transforms.ToPILImage()(im).convert("RGB")
+        diff_im = transforms.ToPILImage()(diff_im).convert("RGB")
         noised_im = transforms.ToPILImage()(noised_im).convert("RGB")
-        image_grid([im, noised_im], 1, 2).save(f'Pics/{epoch}_{is_normal}/im_{step}.jpg')
+        image_grid([noised_im, diff_im], 1, 2).save(f'{des_name}/{epoch}_{is_normal}/im_{step}.jpg')
 
 
 def valid(args, model, writer, test_loader, epoch, is_normal=True):
@@ -286,11 +286,11 @@ def train(args, model):
         for step, batch in enumerate(epoch_iterator):
             batch = tuple(t.to(args.device) for t in batch)
             x, y = batch
-            loss, attn_weights = model(x, y)
+            _, attn_weights = model(x, y)
             attn_weights = torch.stack(attn_weights, dim=1)
             noised_x = pgd_attack(x, model, eps=args.pgd_eps, n_iter=args.pgd_iter)
             model.train()
-            _, noisy_attn = model(noised_x, y)
+            loss, noisy_attn = model(noised_x, y)
             noisy_attn = torch.stack(noisy_attn, dim=1)
             attn_loss = att_criterion(attn_weights, noisy_attn)
             loss += args.attn_loss_coef * attn_loss
