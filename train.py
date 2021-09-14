@@ -394,10 +394,16 @@ def train(args, model):
             batch = tuple(t.to(args.device) for t in batch)
             x, y = batch
             _, attn_weights = model(x, y)
+            attn_mask = get_att_mask(attn_weights)
+            if step == 0:
+                visualize_attention(x, attn_mask, epoch, True, "Pics_Train_Normal")
             attn_weights = torch.stack(attn_weights, dim=1)
             noised_x = pgd_attack(x, model, eps=args.pgd_eps, n_iter=args.pgd_iter)
             model.train()
             loss, noisy_attn = model(noised_x, y)
+            attn_mask_adv = get_att_mask(noisy_attn)
+            if step == 0:
+                visualize_attention(noised_x, attn_mask_adv, epoch, True, "Pics_Train_Adv")
             noisy_attn = torch.stack(noisy_attn, dim=1)
             attn_loss = att_criterion(attn_weights, noisy_attn)
             loss += args.attn_loss_coef * attn_loss
