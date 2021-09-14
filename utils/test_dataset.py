@@ -12,7 +12,7 @@ class TestDataset(Dataset):
                                     download=True,
                                     transform=transform)
         labels = np.array(self.dataset.targets)
-        self.indices = [i for i in range(len(labels)) if ((is_normal and labels[i] < 5) or ((not is_normal) and labels[i] >= 5))]
+        self.indices = [i for i in range(len(labels)) if ((is_normal and labels[i] < 7) or ((not is_normal) and labels[i] >= 7))]
 
     def __len__(self):
         return len(self.indices)

@@ -8,7 +8,7 @@ class NormalDataset(Dataset):
         indices = main_dataset.indices
         final_indices = []
         for i in indices:
-            if main_dataset.dataset.targets[i] < 5:
+            if main_dataset.dataset.targets[i] < 7:
                 final_indices.append(i)
         self.indices = final_indices
         self.transform = transform

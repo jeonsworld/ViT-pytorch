@@ -3,29 +3,24 @@ from __future__ import absolute_import, division, print_function
 
 import logging
 import argparse
-import os
 import random
 import numpy as np
 import pandas as pd
 from torch.autograd import Variable
-
+import cv2
 from datetime import timedelta
-
 import torch
 import torch.distributed as dist
-import matplotlib.pyplot as plt
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 # from apex import amp
 # from apex.parallel import DistributedDataParallel as DDP
 from torchvision import transforms
-
 from models.modeling import VisionTransformer, CONFIGS
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.data_utils import get_outlier_loader
 from utils.dist_util import get_world_size
 from utils.file_utils import CSV_Writer
-
 from sklearn.metrics import roc_auc_score
 from PIL import Image
 import os
@@ -65,12 +60,34 @@ def save_model(args, model):
     logger.info("Saved model checkpoint to [DIR: %s]", args.output_dir)
 
 
+def save_model_training(args, epoch, model, optimizer, scheduler, normal_train_loader):
+    state = {
+        'epoch': epoch,
+        'model': model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'scheduler': scheduler.state_dict(),
+        'train_loader': normal_train_loader
+    }
+    if not os.path.exists("checkpoints"):
+        os.makedirs("checkpoints")
+    torch.save(state, f"checkpoints/{args.name}_cp.bin")
+
+
+def load_model_training(args, model, optimizer, scheduler):
+    state = torch.load(args.training_weights_dir)
+    model.zero_head = False
+    model.load_state_dict(state['model'])
+    optimizer.load_state_dict(state['optimizer'])
+    scheduler.load_state_dict(state['scheduler'])
+    return state['epoch'], state['train_loader']
+
+
 def setup(args):
     # Prepare model
     config = CONFIGS[args.model_type]
 
     # num_classes = 10 if args.dataset == "cifar10" else 100
-    num_classes = 5
+    num_classes = 7
 
     model = VisionTransformer(config, args.img_size, zero_head=True, num_classes=num_classes, vis=True)
     if args.pretrained_dir:  # if false train from scratch
@@ -110,6 +127,26 @@ def image_grid(imgs, rows, cols):
     return grid
 
 
+def visualize_attention(x, mask, epoch, is_normal, des_name="Pics_atten"):
+    x = x.clone()
+    mask = mask.clone()
+    if not os.path.exists(f"{des_name}"):
+        os.makedirs(f"{des_name}")
+    if not os.path.exists(f"{des_name}/{epoch}_{is_normal}"):
+        os.makedirs(f"{des_name}/{epoch}_{is_normal}")
+    for (step, (im, mask_att)) in enumerate(zip(x, mask)):
+        mask_att = mask_att.detach().to('cpu').numpy()
+        im = im.detach().to('cpu').permute(1, 2, 0).numpy()
+        mask_resize = cv2.resize(mask_att / mask_att.max(), im.shape[:2])[..., np.newaxis]
+        im = (0.5 * im + 0.5) * 255
+        masked_im = (mask_resize * im).astype("uint8")
+        heat_map = cv2.applyColorMap((mask_resize[:, :, 0] * 255).astype("uint8"), cv2.COLORMAP_HOT)
+        im = transforms.ToPILImage()(im.astype("uint8")).convert("RGB")
+        masked_im = transforms.ToPILImage()(masked_im).convert("RGB")
+        heat_map = transforms.ToPILImage()(heat_map[:, :, [2, 1, 0]]).convert("RGB")
+        image_grid([im, masked_im, heat_map], 1, 3).save(f'{des_name}/{epoch}_{is_normal}/im_{step}.jpg')
+
+
 def visualize(x, noised_x, epoch, is_normal, des_name="Pics"):
     if not os.path.exists(f"{des_name}"):
         os.makedirs(f"{des_name}")
@@ -119,23 +156,41 @@ def visualize(x, noised_x, epoch, is_normal, des_name="Pics"):
         diff_im = 10 * (im - noised_im)
         diff_im.mul_(0.5).add_(0.5)
         noised_im.mul_(0.5).add_(0.5)
-        diff_im = transforms.ToPILImage()(diff_im).convert("RGB")
-        noised_im = transforms.ToPILImage()(noised_im).convert("RGB")
+        diff_im = transforms.ToPILImage()(diff_im.to('cpu')).convert("RGB")
+        noised_im = transforms.ToPILImage()(noised_im.to('cpu')).convert("RGB")
         image_grid([noised_im, diff_im], 1, 2).save(f'{des_name}/{epoch}_{is_normal}/im_{step}.jpg')
+
+
+def get_att_mask(att_mat):
+    att_mat = torch.stack(att_mat).detach()
+    att_mat = torch.mean(att_mat, dim=2)
+    residual_att = torch.eye(att_mat.size(2)).to('cuda')
+    aug_att_mat = att_mat + residual_att
+    aug_att_mat = aug_att_mat / aug_att_mat.sum(dim=-1).unsqueeze(-1)
+    joint_attentions = torch.zeros(aug_att_mat.size()).to('cuda')
+    joint_attentions[0] = aug_att_mat[0]
+    for n in range(1, aug_att_mat.size(0)):
+        joint_attentions[n] = torch.matmul(aug_att_mat[n], joint_attentions[n - 1])
+    v = joint_attentions[-1]
+    grid_size = int(np.sqrt(aug_att_mat.size(-1)))
+    mask = v[:, 0, 1:].reshape(-1, grid_size, grid_size)
+    return mask
 
 
 def valid(args, model, writer, test_loader, epoch, is_normal=True):
     # Validation!
     eval_losses = AverageMeter()
+    eval_losses_adv = AverageMeter()
     att_losses = AverageMeter()
-
+    att_rollout_losses = AverageMeter()
     logger.info("***** Running Validation *****")
     logger.info("  Num steps = %d", len(test_loader))
     logger.info("  Batch size = %d", args.eval_batch_size)
 
     model.eval()
-    all_preds, all_label = [], []
-    all_attn_loss = []
+    all_preds, all_label, all_preds_adv = [], [], []
+    all_attn_loss, all_attn_rollout_loss = [], []
+    all_max_softmax, all_max_softmax_adv = [], []
     epoch_iterator = tqdm(test_loader,
                           desc="Validating... (loss=X.X) (att_loss=X.X)",
                           bar_format="{l_bar}{r_bar}",
@@ -143,7 +198,6 @@ def valid(args, model, writer, test_loader, epoch, is_normal=True):
                           disable=args.local_rank not in [-1, 0],
                           position=0, leave=True)
     loss_fct = torch.nn.CrossEntropyLoss()
-    att_criterion = torch.nn.MSELoss()
     for step, batch in enumerate(epoch_iterator):
         batch = tuple(t.to(args.device) for t in batch)
         x, y = batch
@@ -154,27 +208,75 @@ def valid(args, model, writer, test_loader, epoch, is_normal=True):
             visualize(x.clone(), noised_x.clone(), epoch, is_normal)
         with torch.no_grad():
             logits, attn_weights = model(x)
-            attn_weights = torch.stack(attn_weights, dim=1)
+            attn_stack = torch.stack(attn_weights, dim=1)
 
-            _, noisy_attn = model(noised_x)
-            noisy_attn = torch.stack(noisy_attn, dim=1)
+            logits_adv, noisy_attn = model(noised_x)
+            noisy_attn_stack = torch.stack(noisy_attn, dim=1)
 
-            attn_loss = att_criterion(attn_weights, noisy_attn)
+            attn_diff = (attn_stack - noisy_attn_stack) ** 2
+            att_losses.update(attn_diff.mean().item())
+            batch_attn = torch.mean(attn_diff, tuple(range(1, attn_diff.ndim))).detach().cpu().numpy()
+            if len(all_attn_loss) == 0:
+                all_attn_loss.append(batch_attn)
+            else:
+                all_attn_loss[0] = np.append(
+                    all_attn_loss[0], batch_attn, axis=0
+                )
 
-            att_losses.update(attn_loss.item())
-            all_attn_loss.append(attn_loss.item())
+            att_mask = get_att_mask(attn_weights)
+            noisy_mask = get_att_mask(noisy_attn)
+            if step == 0:
+                visualize_attention(x, att_mask, epoch, is_normal, "Pics_Attn_Normal")
+                visualize_attention(noised_x, noisy_mask, epoch, is_normal, "Pics_Attn_Attacked")
+
+            attn_rollout_diff = (att_mask - noisy_mask) ** 2
+            att_rollout_losses.update(attn_rollout_diff.mean().item())
+            batch_attn = torch.mean(attn_rollout_diff, tuple(range(1, attn_rollout_diff.ndim))).detach().cpu().numpy()
+            if len(all_attn_rollout_loss) == 0:
+                all_attn_rollout_loss.append(batch_attn)
+            else:
+                all_attn_rollout_loss[0] = np.append(
+                    all_attn_rollout_loss[0], batch_attn, axis=0
+                )
+
             if is_normal:
                 eval_loss = loss_fct(logits, y)
                 eval_losses.update(eval_loss.item())
 
+                eval_loss_adv = loss_fct(logits_adv, y)
+                eval_losses_adv.update(eval_loss_adv.item())
+
+            softmax = torch.nn.functional.softmax(logits, dim=1)
+            max_softmax = torch.max(softmax, 1).values.detach().cpu().numpy()
+            if len(all_max_softmax) == 0:
+                all_max_softmax.append(max_softmax)
+            else:
+                all_max_softmax[0] = np.append(
+                    all_max_softmax[0], max_softmax, axis=0
+                )
+
+            softmax_adv = torch.nn.functional.softmax(logits_adv, dim=1)
+            max_softmax_adv = torch.max(softmax_adv, 1).values.detach().cpu().numpy()
+            if len(all_max_softmax_adv) == 0:
+                all_max_softmax_adv.append(max_softmax_adv)
+            else:
+                all_max_softmax_adv[0] = np.append(
+                    all_max_softmax_adv[0], max_softmax_adv, axis=0
+                )
+
             preds = torch.argmax(logits, dim=-1)
+            adv_preds = torch.argmax(logits_adv, dim=-1)
 
         if len(all_preds) == 0:
             all_preds.append(preds.detach().cpu().numpy())
+            all_preds_adv.append(adv_preds.detach().cpu().numpy())
             all_label.append(y.detach().cpu().numpy())
         else:
             all_preds[0] = np.append(
                 all_preds[0], preds.detach().cpu().numpy(), axis=0
+            )
+            all_preds_adv[0] = np.append(
+                all_preds_adv[0], adv_preds.detach().cpu().numpy(), axis=0
             )
             all_label[0] = np.append(
                 all_label[0], y.detach().cpu().numpy(), axis=0
@@ -182,9 +284,9 @@ def valid(args, model, writer, test_loader, epoch, is_normal=True):
         epoch_iterator.set_description(
             "Validating... (loss=%2.5f) (att_loss=%2.6f)" % (eval_losses.avg, att_losses.avg))
 
-    all_preds, all_label = all_preds[0], all_label[0]
+    all_preds, all_preds_adv, all_label = all_preds[0], all_preds_adv[0], all_label[0]
     accuracy = simple_accuracy(all_preds, all_label)
-
+    accuracy_adv = simple_accuracy(all_preds_adv, all_label)
     logger.info("\n")
     logger.info("Validation Results")
     logger.info("Epoch: %d" % epoch)
@@ -194,9 +296,12 @@ def valid(args, model, writer, test_loader, epoch, is_normal=True):
 
     writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=epoch)
     if is_normal:
-        return accuracy, all_attn_loss, eval_losses.avg
+        return accuracy, accuracy_adv, att_losses.avg, att_rollout_losses.avg, all_attn_loss[0], \
+               all_attn_rollout_loss[0], all_max_softmax[0], all_max_softmax_adv[
+                   0], eval_losses.avg, eval_losses_adv.avg
     else:
-        return accuracy, all_attn_loss
+        return att_losses.avg, att_rollout_losses.avg, all_attn_loss[0], all_attn_rollout_loss[0], all_max_softmax[0], \
+               all_max_softmax_adv[0]
 
 
 def make_noise(x, epsilon=0.03):
@@ -275,6 +380,8 @@ def train(args, model):
     attentions = AverageMeter()
     epoch, best_acc = 0, 0
     att_criterion = torch.nn.MSELoss()
+    if args.training_weights_dir:
+        epoch, normal_train_loader = load_model_training(args, model, optimizer, scheduler)
     while True:
         model.train()
         epoch_iterator = tqdm(normal_train_loader,
@@ -315,7 +422,7 @@ def train(args, model):
 
                 epoch_iterator.set_description(
                     "Training (%d / %d Steps) (loss=%2.5f) (att_loss=%2.6f)" % (
-                    epoch, t_total, losses.avg, attentions.avg)
+                        epoch, t_total, losses.avg, attentions.avg)
                 )
                 if args.local_rank in [-1, 0]:
                     writer.add_scalar("train/loss", scalar_value=losses.val, global_step=epoch)
@@ -324,17 +431,32 @@ def train(args, model):
         optimizer.zero_grad()
         if args.local_rank in [-1, 0]:
             epoch += 1
-            accuracy, normal_attn_losses, normal_eval_loss = valid(args, model, writer, normal_val_loader, epoch)
-            outlier, outlier_attn_losses = valid(args, model, writer, outlier_val_loader, epoch, is_normal=False)
-            auc = roc_auc_score([0] * len(normal_attn_losses) + [1] * len(outlier_attn_losses),
-                                normal_attn_losses + outlier_attn_losses)
-            normal_np = np.array(normal_attn_losses)
-            outlier_np = np.array(outlier_attn_losses)
-            val_csv_writer.add_record([epoch, auc, normal_np.mean(), outlier_np.mean(),
-                                       normal_eval_loss + args.attn_loss_coef * normal_np.mean(), accuracy])
-            logger.info('AUC Score: %.5f' % auc)
+
+            accuracy, accuracy_adv, normal_attn_loss, normal_rollout_loss, normal_all_attn_loss, normal_all_attn_rollout_loss, \
+            normal_all_max_softmax, normal_all_max_softmax_adv, eval_loss, eval_losses_adv = valid(args, model, writer,
+                                                                                            normal_val_loader, epoch)
+
+            outlier_attn_loss, outlier_att_rollout_loss, outlier_all_attn_loss, outlier_all_attn_rollout_loss, \
+            outlier_all_max_softmax, outlier_all_max_softmax_adv = valid(args, model, writer, outlier_val_loader, epoch,
+                                                                         is_normal=False)
+
+            attn_auc = roc_auc_score([0] * len(normal_all_attn_loss) + [1] * len(outlier_all_attn_loss),
+                                     np.append(normal_all_attn_loss, outlier_all_attn_loss, axis=0))
+
+            attn_rollout_auc = roc_auc_score([0] * len(normal_all_attn_rollout_loss) + [1] * len(outlier_all_attn_rollout_loss),
+                                     np.append(normal_all_attn_rollout_loss, outlier_all_attn_rollout_loss, axis=0))
+
+            max_softmax_auc = roc_auc_score([0] * len(normal_all_max_softmax) + [1] * len(outlier_all_max_softmax),
+                                     np.append(normal_all_max_softmax, outlier_all_max_softmax, axis=0))
+
+            max_softmax_adv_auc = roc_auc_score([0] * len(normal_all_max_softmax_adv) + [1] * len(outlier_all_max_softmax_adv),
+                                     np.append(normal_all_max_softmax_adv, outlier_all_max_softmax_adv, axis=0))
+
+            val_csv_writer.add_record([epoch, accuracy, accuracy_adv, normal_attn_loss, normal_rollout_loss, outlier_attn_loss,
+                                       outlier_att_rollout_loss, attn_auc, attn_rollout_auc, max_softmax_auc, max_softmax_adv_auc, eval_loss, eval_losses_adv])
+            logger.info('AUC Score: %.5f' % max_softmax_auc)
+            save_model_training(args, epoch, model, optimizer, scheduler, normal_train_loader)
             if best_acc < accuracy:
-                save_model(args, model)
                 best_acc = accuracy
             model.train()
             train_csv_writer.add_record([epoch, losses.avg, attentions.avg])
@@ -413,16 +535,21 @@ def main():
                         help="number of iterations in pgd")
     parser.add_argument("--pgd_eps", type=float, default=0.03,
                         help="epsilon in pgd")
+    parser.add_argument("--training_weights_dir", type=str,
+                        help="Where to search for pretrained ViT models to continue training.")
 
     args = parser.parse_args()
 
     global train_csv_writer
     global val_csv_writer
+
     train_csv_writer = CSV_Writer(path=args.csv_path + args.name + '_train.csv',
                                   columns=(['epoch', 'train_loss', 'train_attention_loss']))
+
     val_csv_writer = CSV_Writer(path=args.csv_path + args.name + '_val.csv',
-                                columns=(['epoch', 'auc', 'normal_attention_loss',
-                                          'oulier_attention_loss', 'normal_loss', 'accuracy']))
+                                columns=(['epoch', 'accuracy', 'accuracy_adv', 'normal_attn_loss', 'normal_rollout_loss'
+                                          'outlier_attn_loss', 'outlier_att_rollout_loss', 'attn_auc', 'attn_rollout_auc',
+                                          'max_softmax_auc', 'max_softmax_adv_auc', 'eval_loss', 'eval_losses_adv']))
 
     # Setup CUDA, GPU & distributed training 
     if args.local_rank == -1:
