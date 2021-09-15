@@ -452,11 +452,11 @@ def train(args, model):
             attn_rollout_auc = roc_auc_score([0] * len(normal_all_attn_rollout_loss) + [1] * len(outlier_all_attn_rollout_loss),
                                      np.append(normal_all_attn_rollout_loss, outlier_all_attn_rollout_loss, axis=0))
 
-            max_softmax_auc = roc_auc_score([0] * len(normal_all_max_softmax) + [1] * len(outlier_all_max_softmax),
-                                     np.append(normal_all_max_softmax, outlier_all_max_softmax, axis=0))
+            max_softmax_auc = roc_auc_score([0] * len(outlier_all_max_softmax) + [1] * len(normal_all_max_softmax),
+                                     np.append(outlier_all_max_softmax, normal_all_max_softmax, axis=0))
 
-            max_softmax_adv_auc = roc_auc_score([0] * len(normal_all_max_softmax_adv) + [1] * len(outlier_all_max_softmax_adv),
-                                     np.append(normal_all_max_softmax_adv, outlier_all_max_softmax_adv, axis=0))
+            max_softmax_adv_auc = roc_auc_score([0] * len(outlier_all_max_softmax_adv) + [1] * len(normal_all_max_softmax_adv),
+                                     np.append(outlier_all_max_softmax_adv, normal_all_max_softmax_adv, axis=0))
 
             val_csv_writer.add_record([epoch, accuracy, accuracy_adv, normal_attn_loss, normal_rollout_loss, outlier_attn_loss,
                                        outlier_att_rollout_loss, attn_auc, attn_rollout_auc, max_softmax_auc, max_softmax_adv_auc, eval_loss, eval_losses_adv])
@@ -553,7 +553,7 @@ def main():
                                   columns=(['epoch', 'train_loss', 'train_attention_loss']))
 
     val_csv_writer = CSV_Writer(path=args.csv_path + args.name + '_val.csv',
-                                columns=(['epoch', 'accuracy', 'accuracy_adv', 'normal_attn_loss', 'normal_rollout_loss'
+                                columns=(['epoch', 'accuracy', 'accuracy_adv', 'normal_attn_loss', 'normal_rollout_loss',
                                           'outlier_attn_loss', 'outlier_att_rollout_loss', 'attn_auc', 'attn_rollout_auc',
                                           'max_softmax_auc', 'max_softmax_adv_auc', 'eval_loss', 'eval_losses_adv']))
 
