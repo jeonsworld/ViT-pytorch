@@ -244,6 +244,7 @@ class Encoder(nn.Module):
             if self.vis:
                 attn_weights.append(weights)
         encoded = self.encoder_norm(hidden_states)
+        # attn_weights = torch.stack(attn_weights, dim=1)
         return encoded, attn_weights
 
 
@@ -276,7 +277,7 @@ class VisionTransformer(nn.Module):
         if labels is not None:
             loss_fct = CrossEntropyLoss()
             loss = loss_fct(logits.view(-1, self.num_classes), labels.view(-1))
-            return loss
+            return loss, attn_weights
         else:
             return logits, attn_weights
 
