@@ -3,3 +3,4 @@ numpy
 tqdm
 tensorboard
 ml-collections
+scipy
