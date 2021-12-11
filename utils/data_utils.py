@@ -5,11 +5,21 @@ import torch
 from torchvision import transforms, datasets
 from torch.utils.data import DataLoader, RandomSampler, DistributedSampler, SequentialSampler
 
+from .data_loader_cifar2_offical import get_cifar2
+
 
 logger = logging.getLogger(__name__)
 
 
 def get_loader(args):
+
+    # add hymenoptera dataloader
+    if args.dataset == "hymenoptera":
+        print("!!! Current use the hymenoptera dataset for train and test.")
+        dataloaders, dataset_sizes, class_names = get_cifar2()
+        return dataloaders["train"], dataloaders["val"]
+
+
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()
 
