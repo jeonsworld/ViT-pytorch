@@ -14,14 +14,15 @@ import torch.distributed as dist
 
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
-from apex import amp
-from apex.parallel import DistributedDataParallel as DDP
+#from apex import amp
+#from apex.parallel import DistributedDataParallel as DDP
 
 from models.modeling import VisionTransformer, CONFIGS
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.data_utils import get_loader
 from utils.dist_util import get_world_size
 
+from torch.nn import Linear
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +60,25 @@ def setup(args):
     # Prepare model
     config = CONFIGS[args.model_type]
 
-    num_classes = 10 if args.dataset == "cifar10" else 100
+    #num_classes = 10 if args.dataset == "cifar10" else 100
+    if args.dataset == "cifar10":
+        num_classes = 10
+    elif args.dataset == "cifar2":
+        num_classes = 2
+    else:
+        num_classes = 100
 
     model = VisionTransformer(config, args.img_size, zero_head=True, num_classes=num_classes)
     model.load_from(np.load(args.pretrained_dir))
+
+    # load the pretrained model and freeze the all network except the last layer
+    if args.dataset == "cifar2":
+        print("Freeze the all network except the last layer")
+        for param in model.parameters():
+            param.requires_grad = False
+        # change the last layer
+        model.head = Linear(config.hidden_size, num_classes)
+
     model.to(args.device)
     num_params = count_parameters(model)
 
@@ -71,6 +87,7 @@ def setup(args):
     logger.info("Total Parameter: \t%2.1fM" % num_params)
     print(num_params)
     return args, model
+
 
 
 def count_parameters(model):
@@ -149,11 +166,34 @@ def train(args, model):
     # Prepare dataset
     train_loader, test_loader = get_loader(args)
 
-    # Prepare optimizer and scheduler
-    optimizer = torch.optim.SGD(model.parameters(),
-                                lr=args.learning_rate,
-                                momentum=0.9,
-                                weight_decay=args.weight_decay)
+    # For Cifar2
+    if args.dataset == "cifar2":
+        if args.freeze == -1:
+            # only optimize the parameters of the last layer
+            print("***** Only optimize the parameters of the last layer")
+            optimizer = torch.optim.SGD(model.head.parameters(),
+                                        lr=args.learning_rate * 10,
+                                        momentum=0.9,
+                                        weight_decay=args.weight_decay)
+        else:
+            # Optimize all parameters but with different learning rate
+            print("*****  Optimize all parameters but with different learning rate")
+            vit_code_param_lst = [param for name, param in model.named_parameters() if name not in ["head.weight", "head.bias"]]
+            optimizer = torch.optim.SGD([
+                                            {"params":vit_code_param_lst},
+                                            {"params":model.head.parameters(), "lr": args.learning_rate * 10}
+                                        ],
+                                        lr=args.learning_rate ,
+                                        momentum=0.9,
+                                        weight_decay=args.weight_decay)
+
+
+    else:
+        # Prepare optimizer and scheduler
+        optimizer = torch.optim.SGD(model.parameters(),
+                                    lr=args.learning_rate,
+                                    momentum=0.9,
+                                    weight_decay=args.weight_decay)
     t_total = args.num_steps
     if args.decay_type == "cosine":
         scheduler = WarmupCosineSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=t_total)
@@ -239,13 +279,16 @@ def train(args, model):
     logger.info("End Training!")
 
 
+
 def main():
     parser = argparse.ArgumentParser()
     # Required parameters
     parser.add_argument("--name", required=True,
                         help="Name of this run. Used for monitoring.")
-    parser.add_argument("--dataset", choices=["cifar10", "cifar100"], default="cifar10",
+    parser.add_argument("--dataset", choices=["cifar10", "cifar100","cifar2"], default="cifar10",
                         help="Which downstream task.")
+    parser.add_argument("--freeze", default=-1, type=int,
+                        help="freeze all networks except last layer")
     parser.add_argument("--model_type", choices=["ViT-B_16", "ViT-B_32", "ViT-L_16",
                                                  "ViT-L_32", "ViT-H_14", "R50-ViT-B_16"],
                         default="ViT-B_16",
@@ -257,6 +300,8 @@ def main():
 
     parser.add_argument("--img_size", default=224, type=int,
                         help="Resolution size")
+    parser.add_argument("--num_classes", default=10, type=int,
+                        help="Number of classes")
     parser.add_argument("--train_batch_size", default=512, type=int,
                         help="Total batch size for training.")
     parser.add_argument("--eval_batch_size", default=64, type=int,

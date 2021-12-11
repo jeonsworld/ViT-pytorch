@@ -3,3 +3,7 @@ numpy
 tqdm
 tensorboard
 ml-collections
+scipy
+numpy
+torchvision
+matplotlib
