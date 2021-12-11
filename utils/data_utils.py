@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 def get_loader(args):
 
     # add hymenoptera dataloader
-    if args.dataset == "hymenoptera":
-        print("!!! Current use the hymenoptera dataset for train and test.")
+    if args.dataset == "cifar2":
+        print("!!! Current use the cifar2 dataset for train and test.")
         dataloaders, dataset_sizes, class_names = get_cifar2()
         return dataloaders["train"], dataloaders["val"]
 
