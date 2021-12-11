@@ -34,7 +34,7 @@ def get_cifar2():
         ]),
     }
 
-    data_dir = '../data/hymenoptera_data'
+    data_dir = './data/hymenoptera_data'
     image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x),
                                               data_transforms[x])
                       for x in ['train', 'val']}

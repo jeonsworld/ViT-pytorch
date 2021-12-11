@@ -22,6 +22,7 @@ from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.data_utils import get_loader
 from utils.dist_util import get_world_size
 
+from torch.nn import Linear
 
 logger = logging.getLogger(__name__)
 
@@ -165,12 +166,28 @@ def train(args, model):
     # Prepare dataset
     train_loader, test_loader = get_loader(args)
 
-    # For Cifar2, only optimize the parameters of the last layer
+    # For Cifar2
     if args.dataset == "cifar2":
-        print("***** For Cifar2, only optimize the parameters of the last layer")
-        optimizer = torch.optim.SGD(model.head.parameters(),
-                                    lr= 0.001,
-                                    momentum=0.9)
+        if args.freeze == -1:
+            # only optimize the parameters of the last layer
+            print("***** Only optimize the parameters of the last layer")
+            optimizer = torch.optim.SGD(model.head.parameters(),
+                                        lr=args.learning_rate * 10,
+                                        momentum=0.9,
+                                        weight_decay=args.weight_decay)
+        else:
+            # Optimize all parameters but with different learning rate
+            print("*****  Optimize all parameters but with different learning rate")
+            vit_code_param_lst = [param for name, param in model.named_parameters() if name not in ["head.weight", "head.bias"]]
+            optimizer = torch.optim.SGD([
+                                            {"params":vit_code_param_lst},
+                                            {"params":model.head.parameters(), "lr": args.learning_rate * 10}
+                                        ],
+                                        lr=args.learning_rate ,
+                                        momentum=0.9,
+                                        weight_decay=args.weight_decay)
+
+
     else:
         # Prepare optimizer and scheduler
         optimizer = torch.optim.SGD(model.parameters(),
@@ -268,8 +285,10 @@ def main():
     # Required parameters
     parser.add_argument("--name", required=True,
                         help="Name of this run. Used for monitoring.")
-    parser.add_argument("--dataset", choices=["cifar10", "cifar100","hymenoptera"], default="cifar10",
+    parser.add_argument("--dataset", choices=["cifar10", "cifar100","cifar2"], default="cifar10",
                         help="Which downstream task.")
+    parser.add_argument("--freeze", default=-1, type=int,
+                        help="freeze all networks except last layer")
     parser.add_argument("--model_type", choices=["ViT-B_16", "ViT-B_32", "ViT-L_16",
                                                  "ViT-L_32", "ViT-H_14", "R50-ViT-B_16"],
                         default="ViT-B_16",
