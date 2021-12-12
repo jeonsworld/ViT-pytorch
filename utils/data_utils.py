@@ -5,8 +5,6 @@ import torch
 from torchvision import transforms, datasets
 from torch.utils.data import DataLoader, RandomSampler, DistributedSampler, SequentialSampler
 
-from .data_loader_cifar2_offical import get_cifar2
-
 
 logger = logging.getLogger(__name__)
 
