@@ -5,7 +5,6 @@ import torch
 from torchvision import transforms, datasets
 from torch.utils.data import DataLoader, RandomSampler, DistributedSampler, SequentialSampler
 
-import os
 
 logger = logging.getLogger(__name__)
 
@@ -25,15 +24,7 @@ def get_loader(args):
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
     ])
 
-    if args.dataset == "cifar2":
-        print("***** Current use the cifar2 dataset for train and test.  *****")
-        cifar2_dir = './data/hymenoptera_data'
-        trainset = datasets.ImageFolder(root=os.path.join(cifar2_dir, "train"),
-                                        transform=transform_train)
-        testset = datasets.ImageFolder(root=os.path.join(cifar2_dir, "val"),
-                                       transform=transform_test)
-
-    elif args.dataset == "cifar10":
+    if args.dataset == "cifar10":
         trainset = datasets.CIFAR10(root="./data",
                                     train=True,
                                     download=True,
