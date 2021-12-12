@@ -73,9 +73,7 @@ def setup(args):
 
     # load the pretrained model and freeze the all network except the last layer
     if args.dataset == "cifar2":
-        print("Freeze the all network except the last layer")
-        for param in model.parameters():
-            param.requires_grad = False
+        print("Change the last layer of network")
         # change the last layer
         model.head = Linear(config.hidden_size, num_classes)
 
@@ -168,9 +166,19 @@ def train(args, model):
 
     # For Cifar2
     if args.dataset == "cifar2":
+        # get all parameters of the network except the last layer
+        vit_code_param_lst = []
+        head_param_lst = []
+        for name, param in model.named_parameters():
+            if name == "head.weight" or name == "head.bias":
+                head_param_lst.append(param)
+            else:
+                vit_code_param_lst.append(param)
         if args.freeze == -1:
             # only optimize the parameters of the last layer
             print("***** Only optimize the parameters of the last layer")
+            for param in vit_code_param_lst:
+                param.requires_grad  = False
             optimizer = torch.optim.SGD(model.head.parameters(),
                                         lr=args.learning_rate * 10,
                                         momentum=0.9,
@@ -178,10 +186,9 @@ def train(args, model):
         else:
             # Optimize all parameters but with different learning rate
             print("*****  Optimize all parameters but with different learning rate")
-            vit_code_param_lst = [param for name, param in model.named_parameters() if name not in ["head.weight", "head.bias"]]
             optimizer = torch.optim.SGD([
                                             {"params":vit_code_param_lst},
-                                            {"params":model.head.parameters(), "lr": args.learning_rate * 10}
+                                            {"params":head_param_lst, "lr": args.learning_rate * 10}
                                         ],
                                         lr=args.learning_rate ,
                                         momentum=0.9,
