@@ -12,14 +12,6 @@ logger = logging.getLogger(__name__)
 
 
 def get_loader(args):
-
-    # add hymenoptera dataloader
-    if args.dataset == "cifar2":
-        print("!!! Current use the cifar2 dataset for train and test.")
-        dataloaders, dataset_sizes, class_names = get_cifar2()
-        return dataloaders["train"], dataloaders["val"]
-
-
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()
 
@@ -34,7 +26,15 @@ def get_loader(args):
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
     ])
 
-    if args.dataset == "cifar10":
+    if args.dataset == "cifar2":
+        print("***** Current use the cifar2 dataset for train and test.  *****")
+        cifar2_dir = './data/hymenoptera_data'
+        trainset = datasets.ImageFolder(root=os.path.join(cifar2_dir, "train"),
+                                        transforms=transform_train)
+        testset = datasets.ImageFolder(root=os.path.join(cifar2_dir, "test"),
+                                       transforms=transform_test)
+
+    elif args.dataset == "cifar10":
         trainset = datasets.CIFAR10(root="./data",
                                     train=True,
                                     download=True,
