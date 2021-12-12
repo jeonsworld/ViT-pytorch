@@ -19,6 +19,11 @@ from torch.utils.tensorboard import SummaryWriter
 
 from models.modeling import VisionTransformer, CONFIGS
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
+
+from torch.optim import lr_scheduler
+from torch.nn import CrossEntropyLoss
+
+
 from utils.data_utils import get_loader
 from utils.dist_util import get_world_size
 
@@ -150,6 +155,7 @@ def valid(args, model, writer, test_loader, global_step):
     logger.info("Valid Accuracy: %2.5f" % accuracy)
 
     writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=global_step)
+    writer.add_scalar("test/loss", scalar_value=eval_losses.avg, global_step=global_step)
     return accuracy
 
 
@@ -286,6 +292,111 @@ def train(args, model):
     logger.info("End Training!")
 
 
+def train_cifar2(args, model):
+    """ Train the model """
+    if args.local_rank in [-1, 0]:
+        os.makedirs(args.output_dir, exist_ok=True)
+        writer = SummaryWriter(log_dir=os.path.join("logs", args.name))
+
+    args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
+
+    # Prepare dataset
+    train_loader, test_loader = get_loader(args)
+
+    # For Cifar2
+    if args.dataset == "cifar2":
+        # get all parameters of the network except the last layer
+        vit_code_param_lst = []
+        head_param_lst = []
+        for name, param in model.named_parameters():
+            if name == "head.weight" or name == "head.bias":
+                head_param_lst.append(param)
+            else:
+                vit_code_param_lst.append(param)
+        if args.freeze == -1:
+            # only optimize the parameters of the last layer
+            print("***** Only optimize the parameters of the last layer")
+            for param in vit_code_param_lst:
+                param.requires_grad = False
+            optimizer = torch.optim.SGD(model.head.parameters(),
+                                        lr=args.learning_rate * 10,
+                                        momentum=0.9,
+                                        weight_decay=args.weight_decay)
+        else:
+            # Optimize all parameters but with different learning rate
+            print("*****  Optimize all parameters but with different learning rate")
+            optimizer = torch.optim.SGD([
+                {"params": vit_code_param_lst},
+                {"params": head_param_lst, "lr": args.learning_rate}
+            ],
+                lr=args.learning_rate,
+                momentum=0.9,
+                weight_decay=args.weight_decay)
+    t_total = args.num_steps
+    if args.dataset == "cifar2":
+        scheduler = lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.1)
+
+    # Train!
+    logger.info("***** Running training *****")
+    logger.info("  Total optimization steps = %d", args.num_steps)
+    logger.info("  Instantaneous batch size per GPU = %d", args.train_batch_size)
+    logger.info("  Total train batch size (w. parallel, distributed & accumulation) = %d",
+                args.train_batch_size * args.gradient_accumulation_steps * (
+                    torch.distributed.get_world_size() if args.local_rank != -1 else 1))
+    logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
+
+    model.zero_grad()
+    set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
+    losses = AverageMeter()
+    global_step, best_acc = 0, 0
+    while True:
+        loss_fct = CrossEntropyLoss()
+        for epoch in range(args.num_steps):
+            if (epoch + 1) % args.eval_every == 0:
+                logger.info("Epoch {} / {}".format(epoch + 1, args.num_steps))
+            global_step += 1
+            model.train()
+            epoch_loss = 0.0
+            epoch_corrects = 0
+            for x, y in train_loader:
+                x = x.to(args.device)
+                y = y.to(args.device)
+
+                optimizer.zero_grad()
+                with torch.set_grad_enabled(True):
+                    logits, _ = model(x)
+                    _, preds = torch.max(logits, dim=-1)
+                    loss = loss_fct(logits.view(-1, args.num_classes), y.view(-1))
+                    # compute grad and update parameters
+                    loss.backward()
+                    optimizer.step()
+                epoch_loss += loss.item() * x.size(0)
+                epoch_corrects += torch.sum(preds == y.data)
+
+            epoch_loss = epoch_loss / 245.0
+            epoch_acc = epoch_corrects / 245.0
+            logger.info('Train Loss: {:.4f} Acc: {:.4f} LR: {}'.format(epoch_loss, epoch_acc, scheduler.get_lr()[0]))
+
+            #if global_step % args.eval_every == 0 :
+            accuracy = valid(args, model, writer, test_loader, global_step)
+            if best_acc < accuracy:
+                save_model(args, model)
+                best_acc = accuracy
+
+
+            scheduler.step()
+            writer.add_scalar("train/loss", scalar_value=losses.val, global_step=global_step)
+            writer.add_scalar("train/lr", scalar_value=scheduler.get_lr()[0], global_step=global_step)
+            writer.add_scalar("train/acc", scalar_value=epoch_acc, global_step=global_step)
+
+        if global_step % t_total == 0:
+            break
+
+    if args.local_rank in [-1, 0]:
+        writer.close()
+    logger.info("Best Accuracy: \t%f" % best_acc)
+    logger.info("End Training!")
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -373,7 +484,10 @@ def main():
     args, model = setup(args)
 
     # Training
-    train(args, model)
+    if args.dataset == "cifar2":
+        train_cifar2(args, model)
+    else:
+        train(args, model)
 
 
 if __name__ == "__main__":
