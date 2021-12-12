@@ -158,7 +158,6 @@ def valid(args, model, writer, test_loader, global_step):
     writer.add_scalar("test/loss", scalar_value=eval_losses.avg, global_step=global_step)
     return accuracy
 
-
 def train(args, model):
     """ Train the model """
     if args.local_rank in [-1, 0]:
@@ -170,43 +169,11 @@ def train(args, model):
     # Prepare dataset
     train_loader, test_loader = get_loader(args)
 
-    # For Cifar2
-    if args.dataset == "cifar2":
-        # get all parameters of the network except the last layer
-        vit_code_param_lst = []
-        head_param_lst = []
-        for name, param in model.named_parameters():
-            if name == "head.weight" or name == "head.bias":
-                head_param_lst.append(param)
-            else:
-                vit_code_param_lst.append(param)
-        if args.freeze == -1:
-            # only optimize the parameters of the last layer
-            print("***** Only optimize the parameters of the last layer")
-            for param in vit_code_param_lst:
-                param.requires_grad  = False
-            optimizer = torch.optim.SGD(model.head.parameters(),
-                                        lr=args.learning_rate * 10,
-                                        momentum=0.9,
-                                        weight_decay=args.weight_decay)
-        else:
-            # Optimize all parameters but with different learning rate
-            print("*****  Optimize all parameters but with different learning rate")
-            optimizer = torch.optim.SGD([
-                                            {"params":vit_code_param_lst},
-                                            {"params":head_param_lst, "lr": args.learning_rate * 10}
-                                        ],
-                                        lr=args.learning_rate ,
-                                        momentum=0.9,
-                                        weight_decay=args.weight_decay)
-
-
-    else:
-        # Prepare optimizer and scheduler
-        optimizer = torch.optim.SGD(model.parameters(),
-                                    lr=args.learning_rate,
-                                    momentum=0.9,
-                                    weight_decay=args.weight_decay)
+    # Prepare optimizer and scheduler
+    optimizer = torch.optim.SGD(model.parameters(),
+                                lr=args.learning_rate,
+                                momentum=0.9,
+                                weight_decay=args.weight_decay)
     t_total = args.num_steps
     if args.decay_type == "cosine":
         scheduler = WarmupCosineSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=t_total)
@@ -290,6 +257,8 @@ def train(args, model):
         writer.close()
     logger.info("Best Accuracy: \t%f" % best_acc)
     logger.info("End Training!")
+
+
 
 
 def train_cifar2(args, model):
