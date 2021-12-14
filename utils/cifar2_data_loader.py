@@ -38,7 +38,7 @@ def get_cifar2_dataset(args = None):
     return trainset, testset
 
 
-def get_cifar2_dataloader(args):
+def get_cifar2_dataloader(args = None):
     if args:
         train_batch_size = args.train_batch_size
         eval_batch_size = args.eval_batch_size
