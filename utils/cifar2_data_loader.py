@@ -43,8 +43,8 @@ def get_cifar2_dataloader(args = None):
         train_batch_size = args.train_batch_size
         eval_batch_size = args.eval_batch_size
     else:
-        train_batch_size = 32
-        eval_batch_size = 32
+        train_batch_size = 16
+        eval_batch_size = 16
     trainset, testset = get_cifar2_dataset()
     train_sampler = RandomSampler(trainset)
     test_sampler = SequentialSampler(testset)
