@@ -14,20 +14,28 @@ import torch.distributed as dist
 
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
-from apex import amp
-from apex.parallel import DistributedDataParallel as DDP
+# from apex import amp
+# from apex.parallel import DistributedDataParallel as DDP
 
 from models.modeling import VisionTransformer, CONFIGS
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
+
+from torch.optim import lr_scheduler
+from torch.nn import CrossEntropyLoss
+
 from utils.data_utils import get_loader
 from utils.dist_util import get_world_size
 
+from torch.nn import Linear
+
+from utils.cifar2_data_loader import get_cifar2_dataset, get_cifar2_dataloader
 
 logger = logging.getLogger(__name__)
 
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
+
     def __init__(self):
         self.reset()
 
@@ -59,10 +67,23 @@ def setup(args):
     # Prepare model
     config = CONFIGS[args.model_type]
 
-    num_classes = 10 if args.dataset == "cifar10" else 100
+    # num_classes = 10 if args.dataset == "cifar10" else 100
+    if args.dataset == "cifar10":
+        num_classes = 10
+    elif args.dataset == "cifar2":
+        num_classes = 2
+    else:
+        num_classes = 100
 
     model = VisionTransformer(config, args.img_size, zero_head=True, num_classes=num_classes)
     model.load_from(np.load(args.pretrained_dir))
+
+    # load the pretrained model and freeze the all network except the last layer
+    if args.dataset == "cifar2":
+        print("Change the last layer of network")
+        # change the last layer
+        model.head = Linear(config.hidden_size, num_classes)
+
     model.to(args.device)
     num_params = count_parameters(model)
 
@@ -75,7 +96,7 @@ def setup(args):
 
 def count_parameters(model):
     params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    return params/1000000
+    return params / 1000000
 
 
 def set_seed(args):
@@ -135,6 +156,7 @@ def valid(args, model, writer, test_loader, global_step):
     logger.info("Valid Accuracy: %2.5f" % accuracy)
 
     writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=global_step)
+    writer.add_scalar("test/loss", scalar_value=eval_losses.avg, global_step=global_step)
     return accuracy
 
 
@@ -164,7 +186,7 @@ def train(args, model):
         model, optimizer = amp.initialize(models=model,
                                           optimizers=optimizer,
                                           opt_level=args.fp16_opt_level)
-        amp._amp_state.loss_scalers[0]._loss_scale = 2**20
+        amp._amp_state.loss_scalers[0]._loss_scale = 2 ** 20
 
     # Distributed training
     if args.local_rank != -1:
@@ -204,7 +226,7 @@ def train(args, model):
                 loss.backward()
 
             if (step + 1) % args.gradient_accumulation_steps == 0:
-                losses.update(loss.item()*args.gradient_accumulation_steps)
+                losses.update(loss.item() * args.gradient_accumulation_steps)
                 if args.fp16:
                     torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
                 else:
@@ -239,13 +261,121 @@ def train(args, model):
     logger.info("End Training!")
 
 
+def train_cifar2(args, model):
+    """ Train the model """
+    if args.local_rank in [-1, 0]:
+        os.makedirs(args.output_dir, exist_ok=True)
+        writer = SummaryWriter(log_dir=os.path.join("logs", args.name))
+
+    args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
+
+    # Prepare dataset
+    trainset, testset = get_cifar2_dataset()
+    dataset_sizes = {"train": len(trainset), "test": len(testset)}
+    train_loader, test_loader = get_cifar2_dataloader(args)
+
+    # For Cifar2
+    if args.dataset == "cifar2":
+        # get all parameters of the network except the last layer
+        vit_code_param_lst = []
+        head_param_lst = []
+        for name, param in model.named_parameters():
+            if name == "head.weight" or name == "head.bias":
+                head_param_lst.append(param)
+            else:
+                vit_code_param_lst.append(param)
+        if args.freeze == -1:
+            # only optimize the parameters of the last layer
+            print("***** Only optimize the parameters of the last layer")
+            for param in vit_code_param_lst:
+                param.requires_grad = False
+            optimizer = torch.optim.SGD(model.head.parameters(),
+                                        lr=args.learning_rate * 10,
+                                        momentum=0.9,
+                                        weight_decay=args.weight_decay)
+        else:
+            # Optimize all parameters but with different learning rate
+            print("*****  Optimize all parameters but with different learning rate")
+            optimizer = torch.optim.SGD([
+                {"params": vit_code_param_lst},
+                {"params": head_param_lst, "lr": args.learning_rate}
+            ],
+                lr=args.learning_rate,
+                momentum=0.9,
+                weight_decay=args.weight_decay)
+    t_total = args.num_steps
+    if args.dataset == "cifar2":
+        scheduler = lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.1)
+
+    # Train!
+    logger.info("***** Running training *****")
+    logger.info("  Total optimization steps = %d", args.num_steps)
+    logger.info("  Instantaneous batch size per GPU = %d", args.train_batch_size)
+    logger.info("  Total train batch size (w. parallel, distributed & accumulation) = %d",
+                args.train_batch_size * args.gradient_accumulation_steps * (
+                    torch.distributed.get_world_size() if args.local_rank != -1 else 1))
+    logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
+
+    model.zero_grad()
+    set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
+    losses = AverageMeter()
+    global_step, best_acc = 0, 0
+    while True:
+        loss_fct = CrossEntropyLoss()
+        for epoch in range(args.num_steps):
+            if (epoch + 1) % args.eval_every == 0:
+                logger.info("Epoch {} / {}".format(epoch + 1, args.num_steps))
+            global_step += 1
+            model.train()
+            epoch_loss = 0.0
+            epoch_corrects = 0
+            for x, y in train_loader:
+                x = x.to(args.device)
+                y = y.to(args.device)
+                optimizer.zero_grad()
+                with torch.set_grad_enabled(True):
+                    logits, _ = model(x)
+                    _, preds = torch.max(logits, dim=-1)
+                    loss = loss_fct(logits.view(-1, args.num_classes), y.view(-1))
+                    # compute grad and update parameters
+                    loss.backward()
+                    optimizer.step()
+                epoch_loss += loss.item() * x.size(0)
+                epoch_corrects += torch.sum(preds == y.data)
+
+            epoch_loss = epoch_loss * 1.0 / dataset_sizes["train"]
+            epoch_acc = epoch_corrects * 1.0 / dataset_sizes["train"]
+            logger.info('Train Loss: {:.4f} Acc: {:.4f} LR: {}'.format(epoch_loss, epoch_acc, scheduler.get_lr()[0]))
+
+            # if global_step % args.eval_every == 0 :
+            accuracy = valid(args, model, writer, test_loader, global_step)
+            if best_acc < accuracy:
+                save_model(args, model)
+                best_acc = accuracy
+
+            scheduler.step()
+            writer.add_scalar("train/loss", scalar_value=epoch_loss, global_step=global_step)
+            writer.add_scalar("train/lr", scalar_value=scheduler.get_lr()[0], global_step=global_step)
+            writer.add_scalar("train/acc", scalar_value=epoch_acc, global_step=global_step)
+
+        if global_step % t_total == 0:
+            break
+
+    if args.local_rank in [-1, 0]:
+        writer.close()
+    logger.info("Best Accuracy: \t%f" % best_acc)
+    logger.info("End Training!")
+
+
 def main():
     parser = argparse.ArgumentParser()
     # Required parameters
     parser.add_argument("--name", required=True,
                         help="Name of this run. Used for monitoring.")
-    parser.add_argument("--dataset", choices=["cifar10", "cifar100"], default="cifar10",
+    parser.add_argument("--dataset", choices=["cifar10", "cifar100", "cifar2"], default="cifar10",
                         help="Which downstream task.")
+    parser.add_argument("--freeze", default=-1, type=int,
+                        help="freeze all networks except last layer")
     parser.add_argument("--model_type", choices=["ViT-B_16", "ViT-B_32", "ViT-L_16",
                                                  "ViT-L_32", "ViT-H_14", "R50-ViT-B_16"],
                         default="ViT-B_16",
@@ -257,6 +387,8 @@ def main():
 
     parser.add_argument("--img_size", default=224, type=int,
                         help="Resolution size")
+    parser.add_argument("--num_classes", default=10, type=int,
+                        help="Number of classes")
     parser.add_argument("--train_batch_size", default=512, type=int,
                         help="Total batch size for training.")
     parser.add_argument("--eval_batch_size", default=64, type=int,
@@ -321,7 +453,10 @@ def main():
     args, model = setup(args)
 
     # Training
-    train(args, model)
+    if args.dataset == "cifar2":
+        train_cifar2(args, model)
+    else:
+        train(args, model)
 
 
 if __name__ == "__main__":
