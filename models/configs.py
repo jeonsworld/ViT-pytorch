@@ -89,7 +89,7 @@ def get_l32_config():
 
 
 def get_h14_config():
-    """Returns the ViT-L/16 configuration."""
+    """Returns the ViT-H/14 configuration."""
     config = ml_collections.ConfigDict()
     config.patches = ml_collections.ConfigDict({'size': (14, 14)})
     config.hidden_size = 1280
