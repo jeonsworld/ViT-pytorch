@@ -35,13 +35,9 @@ def get_loader(args):
                                    transform=transform_test) if args.local_rank in [-1, 0] else None
 
     else:
-        trainset = datasets.CIFAR100(root="./data",
-                                     train=True,
-                                     download=True,
+        trainset = datasets.ImageFolder(root="./data/DatasetV2/train",
                                      transform=transform_train)
-        testset = datasets.CIFAR100(root="./data",
-                                    train=False,
-                                    download=True,
+        testset = datasets.ImageFolder(root="./data/DatasetV2/valid",
                                     transform=transform_test) if args.local_rank in [-1, 0] else None
     if args.local_rank == 0:
         torch.distributed.barrier()
