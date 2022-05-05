@@ -52,6 +52,7 @@ def save_model(args, model):
     model_to_save = model.module if hasattr(model, 'module') else model
     model_checkpoint = os.path.join(args.output_dir, "%s_checkpoint.bin" % args.name)
     torch.save(model_to_save.state_dict(), model_checkpoint)
+    print("Saved model checkpoint to [DIR: %s]", args.output_dir)
     logger.info("Saved model checkpoint to [DIR: %s]", args.output_dir)
 
 
@@ -59,13 +60,16 @@ def setup(args):
     # Prepare model
     config = CONFIGS[args.model_type]
 
-    num_classes = 10 if args.dataset == "cifar10" else 100
+    num_classes = 10 if args.dataset == "cifar10" else 7
 
     model = VisionTransformer(config, args.img_size, zero_head=True, num_classes=num_classes)
     model.load_from(np.load(args.pretrained_dir))
     model.to(args.device)
     num_params = count_parameters(model)
 
+    print("{}".format(config))
+    print("Training parameters %s", args)
+    print("Total Parameter: \t%2.1fM" % num_params)
     logger.info("{}".format(config))
     logger.info("Training parameters %s", args)
     logger.info("Total Parameter: \t%2.1fM" % num_params)
@@ -86,17 +90,20 @@ def set_seed(args):
         torch.cuda.manual_seed_all(args.seed)
 
 
-def valid(args, model, writer, test_loader, global_step):
+def valid(args, model, writer, valid_loader, global_step):
     # Validation!
     eval_losses = AverageMeter()
 
+    print("***** Running Validation *****")
+    print("  Num steps = %d", len(valid_loader))
+    print("  Batch size = %d", args.eval_batch_size)
     logger.info("***** Running Validation *****")
-    logger.info("  Num steps = %d", len(test_loader))
+    logger.info("  Num steps = %d", len(valid_loader))
     logger.info("  Batch size = %d", args.eval_batch_size)
 
     model.eval()
     all_preds, all_label = [], []
-    epoch_iterator = tqdm(test_loader,
+    epoch_iterator = tqdm(valid_loader,
                           desc="Validating... (loss=X.X)",
                           bar_format="{l_bar}{r_bar}",
                           dynamic_ncols=True,
@@ -128,11 +135,75 @@ def valid(args, model, writer, test_loader, global_step):
     all_preds, all_label = all_preds[0], all_label[0]
     accuracy = simple_accuracy(all_preds, all_label)
 
+    print("\n")
+    print("Validation Results")
+    print("Global Steps: %d" % global_step)
+    print("Valid Loss: %2.5f" % eval_losses.avg)
+    print("Valid Accuracy: %2.5f" % accuracy)
     logger.info("\n")
     logger.info("Validation Results")
     logger.info("Global Steps: %d" % global_step)
     logger.info("Valid Loss: %2.5f" % eval_losses.avg)
     logger.info("Valid Accuracy: %2.5f" % accuracy)
+
+    writer.add_scalar("valid/accuracy", scalar_value=accuracy, global_step=global_step)
+    return accuracy
+
+def test(args, model, writer, test_loader, global_step):
+    # Testing!
+    eval_losses = AverageMeter()
+
+    print("***** Running Inference *****")
+    print("  Num steps = %d", len(test_loader))
+    print("  Batch size = %d", args.eval_batch_size)
+    logger.info("***** Running Inference *****")
+    logger.info("  Num steps = %d", len(test_loader))
+    logger.info("  Batch size = %d", args.eval_batch_size)
+
+    model.eval()
+    all_preds, all_label = [], []
+    epoch_iterator = tqdm(test_loader,
+                          desc="Testing... (loss=X.X)",
+                          bar_format="{l_bar}{r_bar}",
+                          dynamic_ncols=True,
+                          disable=args.local_rank not in [-1, 0])
+    loss_fct = torch.nn.CrossEntropyLoss()
+    for step, batch in enumerate(epoch_iterator):
+        batch = tuple(t.to(args.device) for t in batch)
+        x, y = batch
+        with torch.no_grad():
+            logits = model(x)[0]
+
+            eval_loss = loss_fct(logits, y)
+            eval_losses.update(eval_loss.item())
+
+            preds = torch.argmax(logits, dim=-1)
+
+        if len(all_preds) == 0:
+            all_preds.append(preds.detach().cpu().numpy())
+            all_label.append(y.detach().cpu().numpy())
+        else:
+            all_preds[0] = np.append(
+                all_preds[0], preds.detach().cpu().numpy(), axis=0
+            )
+            all_label[0] = np.append(
+                all_label[0], y.detach().cpu().numpy(), axis=0
+            )
+        epoch_iterator.set_description("Testing... (loss=%2.5f)" % eval_losses.val)
+
+    all_preds, all_label = all_preds[0], all_label[0]
+    accuracy = simple_accuracy(all_preds, all_label)
+
+    print("\n")
+    print("Test Results")
+    print("Global Steps: %d" % global_step)
+    print("Test Loss: %2.5f" % eval_losses.avg)
+    print("Test Accuracy: %2.5f" % accuracy)
+    logger.info("\n")
+    logger.info("Test Results")
+    logger.info("Global Steps: %d" % global_step)
+    logger.info("Test Loss: %2.5f" % eval_losses.avg)
+    logger.info("Test Accuracy: %2.5f" % accuracy)
 
     writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=global_step)
     return accuracy
@@ -147,7 +218,7 @@ def train(args, model):
     args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
 
     # Prepare dataset
-    train_loader, test_loader = get_loader(args)
+    train_loader, valid_loader, test_loader = get_loader(args)
 
     # Prepare optimizer and scheduler
     optimizer = torch.optim.SGD(model.parameters(),
@@ -171,6 +242,13 @@ def train(args, model):
         model = DDP(model, message_size=250000000, gradient_predivide_factor=get_world_size())
 
     # Train!
+    print("***** Running training *****")
+    print("  Total optimization steps = %d", args.num_steps)
+    print("  Instantaneous batch size per GPU = %d", args.train_batch_size)
+    print("  Total train batch size (w. parallel, distributed & accumulation) = %d",
+                args.train_batch_size * args.gradient_accumulation_steps * (
+                    torch.distributed.get_world_size() if args.local_rank != -1 else 1))
+    print("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
     logger.info("***** Running training *****")
     logger.info("  Total optimization steps = %d", args.num_steps)
     logger.info("  Instantaneous batch size per GPU = %d", args.train_batch_size)
@@ -182,7 +260,7 @@ def train(args, model):
     model.zero_grad()
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
     losses = AverageMeter()
-    global_step, best_acc = 0, 0
+    global_step, best_acc, test_acc = 0, 0, 0
     while True:
         model.train()
         epoch_iterator = tqdm(train_loader,
@@ -221,7 +299,7 @@ def train(args, model):
                     writer.add_scalar("train/loss", scalar_value=losses.val, global_step=global_step)
                     writer.add_scalar("train/lr", scalar_value=scheduler.get_lr()[0], global_step=global_step)
                 if global_step % args.eval_every == 0 and args.local_rank in [-1, 0]:
-                    accuracy = valid(args, model, writer, test_loader, global_step)
+                    accuracy = valid(args, model, writer, valid_loader, global_step)
                     if best_acc < accuracy:
                         save_model(args, model)
                         best_acc = accuracy
@@ -235,9 +313,12 @@ def train(args, model):
 
     if args.local_rank in [-1, 0]:
         writer.close()
+    print("Best Accuracy: \t%f" % best_acc)
+    print("End Training!")
     logger.info("Best Accuracy: \t%f" % best_acc)
     logger.info("End Training!")
 
+    test_acc = test(args, model, writer, test_loader, global_step)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -308,9 +389,12 @@ def main():
     args.device = device
 
     # Setup logging
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+    logging.basicConfig(filename='train_val_test.log',
+                        format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
                         datefmt='%m/%d/%Y %H:%M:%S',
                         level=logging.INFO if args.local_rank in [-1, 0] else logging.WARN)
+    print("Process rank: %s, device: %s, n_gpu: %s, distributed training: %s, 16-bits training: %s" %
+                   (args.local_rank, args.device, args.n_gpu, bool(args.local_rank != -1), args.fp16))
     logger.warning("Process rank: %s, device: %s, n_gpu: %s, distributed training: %s, 16-bits training: %s" %
                    (args.local_rank, args.device, args.n_gpu, bool(args.local_rank != -1), args.fp16))
 

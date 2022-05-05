@@ -37,22 +37,30 @@ def get_loader(args):
     else:
         trainset = datasets.ImageFolder(root="./data/DatasetV2/train",
                                      transform=transform_train)
-        testset = datasets.ImageFolder(root="./data/DatasetV2/valid",
+        validset = datasets.ImageFolder(root="./data/DatasetV2/valid",
+                                    transform=transform_test) if args.local_rank in [-1, 0] else None
+        testset = datasets.ImageFolder(root="./data/DatasetV2/test",
                                     transform=transform_test) if args.local_rank in [-1, 0] else None
     if args.local_rank == 0:
         torch.distributed.barrier()
 
     train_sampler = RandomSampler(trainset) if args.local_rank == -1 else DistributedSampler(trainset)
+    valid_sampler = SequentialSampler(validset)
     test_sampler = SequentialSampler(testset)
     train_loader = DataLoader(trainset,
                               sampler=train_sampler,
                               batch_size=args.train_batch_size,
                               num_workers=4,
                               pin_memory=True)
+    valid_loader = DataLoader(validset,
+                             sampler=valid_sampler,
+                             batch_size=args.eval_batch_size,
+                             num_workers=4,
+                             pin_memory=True) if validset is not None else None
     test_loader = DataLoader(testset,
                              sampler=test_sampler,
                              batch_size=args.eval_batch_size,
                              num_workers=4,
                              pin_memory=True) if testset is not None else None
 
-    return train_loader, test_loader
+    return train_loader, valid_loader, test_loader
