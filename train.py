@@ -23,11 +23,6 @@ from utils.data_utils import get_loader
 from utils.dist_util import get_world_size
 
 from sklearn.metrics import classification_report
-from sklearn.metrics import confusion_matrix
-import seaborn as sn
-import matplotlib
-matplotlib.use("template")
-import matplotlib.pyplot as plt
 
 
 logger = logging.getLogger(__name__)
@@ -220,13 +215,9 @@ def test(args, model, writer, test_loader, global_step):
     print("Classification Report")
     print(classification_report(all_label, all_preds, target_names=target_names, digits=2))
 
-    cm = confusion_matrix(all_label, all_preds)
-    cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-    plt.figure(figsize = (12, 8))
-    sn.heatmap(cm, annot=True)
-    plt.show()
-
     writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=global_step)
+    writer.add_scalar("test/all_label", scalar_value=all_label, global_step=global_step)
+    writer.add_scalar("test/all_preds", scalar_value=all_preds, global_step=global_step)
     return accuracy
 
 
