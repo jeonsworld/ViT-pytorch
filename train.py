@@ -25,6 +25,7 @@ from utils.dist_util import get_world_size
 from sklearn.metrics import classification_report
 from sklearn.metrics import confusion_matrix
 import seaborn as sn
+import matplotlib
 import matplotlib.pyplot as plt
 
 
