@@ -26,7 +26,7 @@ from sklearn.metrics import classification_report
 from sklearn.metrics import confusion_matrix
 import seaborn as sn
 import matplotlib
-get_ipython().run_line_magic('matplotlib', 'inline')
+matplotlib.use("template")
 import matplotlib.pyplot as plt
 
 
