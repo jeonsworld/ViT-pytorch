@@ -223,7 +223,7 @@ def test(args, model, writer, test_loader, global_step):
     cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
     plt.figure(figsize = (12, 8))
     sn.heatmap(cm, annot=True)
-    plt.show(block=True)
+    plt.show()
 
     writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=global_step)
     return accuracy
