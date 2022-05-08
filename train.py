@@ -215,12 +215,13 @@ def test(args, model, writer, test_loader, global_step):
     print("Classification Report")
     print(classification_report(all_label, all_preds, target_names=target_names, digits=2))
 
-    print("\n")
-    print("All Labels")
-    print(all_label)
-    print("All Predictions")
-    print(all_preds)
     writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=global_step)
+    
+    for label in all_label:
+        writer.add_scalar("test/all_label", scalar_value=label, global_step=global_step)
+    for pred in all_preds:
+        writer.add_scalar("test/all_preds", scalar_value=pred, global_step=global_step)
+    
     return accuracy
 
 
