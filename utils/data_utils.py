@@ -1,4 +1,5 @@
 import logging
+import albumentations as A
 
 import torch
 
@@ -18,6 +19,17 @@ def get_loader(args):
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
     ])
+    transform_train_aug = A.Compose([
+        A.RandomCrop((args.img_size, args.img_size), scale=(0.05, 1.0)),
+        A.pytorch.transforms.ToTensor() ,
+        A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
+        A.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.50, rotate_limit=45, p=.5),
+        A.RandomRotate90(p=0.5),
+        A.HorizontalFlip(p=0.5),
+        A.RandomBrightnessContrast(p=0.2),
+        A.Blur(blur_limit=2,p =0.2),
+    ])
+
     transform_test = transforms.Compose([
         transforms.Resize((args.img_size, args.img_size)),
         transforms.ToTensor(),
@@ -35,7 +47,11 @@ def get_loader(args):
                                    transform=transform_test) if args.local_rank in [-1, 0] else None
 
     else:
-        trainset = datasets.ImageFolder(root="./data/DatasetV2/train",
+        if args.augmentation == True:
+            trainset = datasets.ImageFolder(root="./data/DatasetV2/train",
+                                     transform=transform_train_aug)
+        else :
+            trainset = datasets.ImageFolder(root="./data/DatasetV2/train",
                                      transform=transform_train)
         validset = datasets.ImageFolder(root="./data/DatasetV2/valid",
                                     transform=transform_test) if args.local_rank in [-1, 0] else None
