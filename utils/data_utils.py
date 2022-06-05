@@ -27,7 +27,6 @@ def get_loader(args):
         A.RandomRotate90(p=0.5),
         A.HorizontalFlip(p=0.5),
         A.RandomBrightnessContrast(p=0.2),
-        A.Blur(blur_limit=2,p =0.2),
     ])
 
     transform_test = transforms.Compose([
